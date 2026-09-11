@@ -400,3 +400,65 @@ in the admin) and answers via `search.py`:
 2. if `AI_AGENT_LLM_HANDLER = "myproject.ai.answer"` is set, your callable
    `(user, message, results, bot, history)` produces the final reply from
    the retrieved context; otherwise a built-in summary reply is used.
+
+
+---
+
+## 9. Big reports, written bit by bit (no more half reports)
+
+A large report generated in one model call overflows the context window and
+arrives truncated. `ai_agent_core.reports` fixes this by splitting the work
+into bounded steps, each its own call:
+
+1. **Outline pass** (tiny) → chapter titles + one-line briefs.
+2. **One chapter per step.** Each chapter prompt contains only: the request,
+   the outline, and short **summaries** of already-written chapters — never
+   their full text. Full chapters live in the database
+   (`ReportJob`/`ReportChapter`, browsable in the admin).
+3. **Assembly on download** → one markdown file with TOC + every chapter.
+
+### Live progress in the chat
+
+Ask the bot *"generate a big report on staffing with 8 chapters"* (or use
+`/report …`). The widget then shows a live progress bubble that updates as
+work advances —
+
+> Outline ready — 8 chapters planned. Writing chapter 1/8: Executive Summary…
+> Finished chapter 1/8 (412 words). Writing chapter 2/8: Introduction & Scope…
+> …
+> Report complete — 8 chapters, 3,510 words. Ready to download. ⬇
+
+— followed by a download card. The chapter count is honoured from the
+request ("… with N chapters").
+
+### How it runs (K8s-friendly, no Celery)
+
+The pipeline is **poll-driven**: the widget POSTs
+`reports/<id>/step/` repeatedly; every call performs exactly one unit of
+work and returns the progress note. No background workers, threads or
+websockets; chapters are claimed atomically so overlapping polls never
+double-write; each step is small enough to never hit proxy timeouts.
+`reports/<id>/` gives read-only status, `reports/<id>/download/` the
+assembled markdown (409 until finished). Jobs are owner-scoped (user or
+anonymous session) — others get 404.
+
+### Plugging in your LLM
+
+```python
+# settings.py
+AI_AGENT_REPORT_WRITER = "myproject.ai.report_writer"
+
+def report_writer(mode, user, job, context):
+    if mode == "outline":
+        # context: {"request", "suggested_chapters"}
+        return [{"title": "...", "brief": "..."}, ...]
+    if mode == "chapter":
+        # context: {"request", "report_title", "outline",
+        #           "chapter_title", "chapter_brief", "chapter_index",
+        #           "total_chapters", "previous_summaries"}  # summaries ONLY
+        return {"content": "...markdown...", "summary": "..."}
+```
+
+Without the setting, a built-in writer composes each chapter from guarded
+table-search results (policies + audit apply), so the pipeline works end to
+end out of the box.

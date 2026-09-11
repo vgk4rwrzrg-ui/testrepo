@@ -333,3 +333,88 @@ class BotChatMessage(models.Model):
 
     def __str__(self):
         return f"{self.role}: {self.content[:40]}"
+
+
+# ===========================================================================
+# Chaptered report generation (big reports written bit by bit)
+# ===========================================================================
+
+class ReportJob(models.Model):
+    """A large report generated chapter-by-chapter so no single LLM call
+    ever holds the whole document in context.
+
+    Pipeline (one unit of work per ``step()``):
+      PENDING -> outline pass (small) -> WRITING -> one chapter per step,
+      each prompt containing only the outline + short SUMMARIES of prior
+      chapters -> DONE (assembled on download).
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending (outline not started)"
+        WRITING = "writing", "Writing chapters"
+        DONE = "done", "Complete"
+        FAILED = "failed", "Failed"
+
+    user = models.ForeignKey(
+        "auth.User", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="report_jobs")
+    session_key = models.CharField(max_length=64, blank=True, db_index=True)
+    conversation = models.ForeignKey(
+        "BotConversation", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="report_jobs")
+    title = models.CharField(max_length=200, blank=True)
+    request_text = models.TextField(
+        help_text="The user's original report request.")
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.PENDING)
+    total_chapters = models.PositiveIntegerField(default=0)
+    chapters_done = models.PositiveIntegerField(default=0)
+    progress_note = models.CharField(max_length=255, blank=True)
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Report #{self.pk}: {self.title or self.request_text[:40]}"
+
+    def owned_by(self, request) -> bool:
+        if getattr(request.user, "is_superuser", False):
+            return True
+        if self.user_id:
+            return request.user.is_authenticated and \
+                request.user.pk == self.user_id
+        return bool(self.session_key) and \
+            request.session.session_key == self.session_key
+
+
+class ReportChapter(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        WRITING = "writing", "Writing"
+        DONE = "done", "Done"
+        FAILED = "failed", "Failed"
+
+    job = models.ForeignKey(ReportJob, on_delete=models.CASCADE,
+                            related_name="chapters")
+    index = models.PositiveIntegerField()
+    title = models.CharField(max_length=200)
+    brief = models.TextField(
+        blank=True, help_text="One-line outline brief for this chapter.")
+    content = models.TextField(blank=True)
+    summary = models.TextField(
+        blank=True,
+        help_text="Short summary carried into later chapters' prompts "
+                  "instead of the full text (keeps context small).")
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.PENDING)
+    word_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["index"]
+        unique_together = [("job", "index")]
+
+    def __str__(self):
+        return f"Ch.{self.index} {self.title} [{self.status}]"

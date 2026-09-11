@@ -309,3 +309,124 @@ class WidgetThemeTests(TestCase):
         self.assertIn("--aac-log-bg: #111827", content)
         # panel colors are variable-driven, not hardcoded
         self.assertIn("background: var(--aac-surface)", content)
+
+
+class ChapteredReportTests(TestCase):
+    """Big reports are written bit by bit with progress notes."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from .models import BotProfile, SearchableField, SearchableTable
+        cls.bot = BotProfile.objects.create(name="Larry", greeting="Hi!",
+                                            is_default=True)
+        cls.hr = Group.objects.create(name="HR")
+        cls.alice = User.objects.create_user("alice", password="pw")
+        cls.alice.groups.add(cls.hr)
+        cls.mallory = User.objects.create_user("mallory", password="pw")
+        t = SearchableTable.objects.create(app_label="ai_agent_core",
+                                           model_name="BotProfile")
+        for f in ("id", "name", "greeting"):
+            SearchableField.objects.create(table=t, field_name=f)
+        from . import registry
+        registry.mark_dirty()
+        registry.sync_registry(force=True)
+        p = TableAccessPolicy.objects.create(
+            app_label="ai_agent_core", model_name="BotProfile",
+            access_level="read")
+        p.groups.add(cls.hr)
+
+    def _start_report(self):
+        self.client.login(username="alice", password="pw")
+        r = self.client.post(
+            "/chat/",
+            {"message": "generate a big report on Larry with 4 chapters"},
+            content_type="application/json")
+        return r.json()
+
+    def test_report_request_creates_job_not_inline_answer(self):
+        data = self._start_report()
+        self.assertIn("report_job", data)
+        self.assertIn("bit by bit", data["reply"])
+
+    def test_stepping_writes_one_chapter_at_a_time_with_notes(self):
+        from .models import ReportJob
+        job_id = self._start_report()["report_job"]
+        url = f"/reports/{job_id}/step/"
+
+        r = self.client.post(url).json()          # outline pass
+        self.assertEqual(r["total_chapters"], 4)
+        self.assertIn("Writing chapter 1/4", r["note"])
+        self.assertFalse(r["done"])
+
+        r = self.client.post(url).json()          # chapter 1
+        self.assertEqual(r["chapters_done"], 1)
+        self.assertIn("Finished chapter 1/4", r["note"])
+        self.assertIn("Writing chapter 2/4", r["note"])
+
+        for _ in range(3):                        # chapters 2..4
+            r = self.client.post(url).json()
+        self.assertTrue(r["done"])
+        self.assertIn("Report complete", r["note"])
+        self.assertIn("download_url", r)
+        job = ReportJob.objects.get(pk=job_id)
+        self.assertEqual(job.chapters.filter(status="done").count(), 4)
+
+    def test_download_contains_every_chapter(self):
+        job_id = self._start_report()["report_job"]
+        url = f"/reports/{job_id}/step/"
+        for _ in range(5):
+            self.client.post(url)
+        r = self.client.get(f"/reports/{job_id}/download/")
+        self.assertEqual(r.status_code, 200)
+        md = r.content.decode()
+        for i in range(1, 5):
+            self.assertIn(f"Chapter {i}:", md)
+        self.assertIn("Larry", md)   # guarded search data made it in
+
+    def test_download_before_finish_is_409(self):
+        job_id = self._start_report()["report_job"]
+        r = self.client.get(f"/reports/{job_id}/download/")
+        self.assertEqual(r.status_code, 409)
+
+    def test_other_user_cannot_step_or_download(self):
+        job_id = self._start_report()["report_job"]
+        self.client.logout()
+        self.client.login(username="mallory", password="pw")
+        self.assertEqual(
+            self.client.post(f"/reports/{job_id}/step/").status_code, 404)
+        self.assertEqual(
+            self.client.get(f"/reports/{job_id}/download/").status_code, 404)
+
+    def test_chapter_context_uses_summaries_not_full_text(self):
+        """The context-overflow fix: later chapters receive only summaries."""
+        from .reports import step
+        from .models import ReportJob
+        job_id = self._start_report()["report_job"]
+        job = ReportJob.objects.get(pk=job_id)
+        captured = {}
+
+        def spy_writer(mode, user, j, context):
+            if mode == "outline":
+                return [{"title": "A", "brief": ""},
+                        {"title": "B", "brief": ""}]
+            captured[context["chapter_index"]] = context
+            return {"content": "word " * 500, "summary": "short summary"}
+
+        from unittest import mock
+        with mock.patch("ai_agent_core.reports.get_writer",
+                        return_value=spy_writer):
+            for _ in range(3):
+                step(ReportJob.objects.get(pk=job_id), user=self.alice)
+
+        ctx2 = captured[2]
+        self.assertEqual(len(ctx2["previous_summaries"]), 1)
+        self.assertEqual(ctx2["previous_summaries"][0]["summary"],
+                         "short summary")
+        blob = str(ctx2)
+        self.assertNotIn("word word word word word", blob)  # no full text
+
+    def test_widget_includes_report_polling(self):
+        r = self.client.get("/widget-demo/")
+        content = r.content.decode()
+        self.assertIn("runReportJob", content)
+        self.assertIn("/reports/0/step/", content)

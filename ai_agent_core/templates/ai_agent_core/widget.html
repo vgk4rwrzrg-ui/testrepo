@@ -193,6 +193,7 @@
 (function () {
   "use strict";
   var chatUrl = "{% url 'ai_agent_core:bot_chat' %}";
+  var stepUrlTpl = "{% url 'ai_agent_core:report_step' 0 %}";  /* 0 -> id */
   var GREETING = "{{ bot.greeting|escapejs }}";
   var root = document.getElementById("aac-root"),
       panel = document.getElementById("aac-panel"),
@@ -321,6 +322,48 @@
     log.scrollTop = log.scrollHeight;
   }
 
+  /* ----- chaptered report progress (big reports written bit by bit) ----- */
+  function csrf() {
+    return form.querySelector("[name=csrfmiddlewaretoken]").value;
+  }
+  function runReportJob(jobId) {
+    var progress = addMsg("bot", "Preparing the outline…");
+    progress.classList.add("aac-typing");
+    function tick() {
+      fetch(stepUrlTpl.replace("0", String(jobId)), {
+        method: "POST",
+        headers: {"X-CSRFToken": csrf()},
+        credentials: "same-origin"
+      }).then(function (r) { return r.json(); }).then(function (data) {
+        progress.textContent = data.note || "Working…";
+        if (data.failed) {
+          progress.classList.remove("aac-typing");
+          addMsg("bot", "The report failed: " + (data.error || "unknown error"));
+          return;
+        }
+        if (data.done) {
+          progress.classList.remove("aac-typing");
+          var card = document.createElement("div");
+          card.className = "aac-card";
+          card.innerHTML = "<b>Report ready</b><br>" +
+            '<a href="' + data.download_url + '" download ' +
+            'style="color:var(--aac-accent);font-weight:600">' +
+            "⬇ Download the full report (" + data.total_chapters +
+            " chapters)</a>";
+          log.appendChild(card);
+          log.scrollTop = log.scrollHeight;
+          return;
+        }
+        setTimeout(tick, 400);   /* next chapter */
+      }).catch(function () {
+        progress.classList.remove("aac-typing");
+        addMsg("bot", "Lost connection while writing the report. " +
+                      "Send the request again to resume.");
+      });
+    }
+    tick();
+  }
+
   form.addEventListener("submit", function (ev) {
     ev.preventDefault();
     var msg = input.value.trim();
@@ -343,6 +386,7 @@
       conversationId = data.conversation_id;
       addMsg("bot", data.reply);
       (data.results || []).forEach(addCard);
+      if (data.report_job) runReportJob(data.report_job);
     }).catch(function () {
       typing.remove();
       addMsg("bot", "Sorry — I could not reach the server.");

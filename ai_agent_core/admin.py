@@ -4,6 +4,7 @@ from django.contrib import admin, messages
 
 from .legacy.ai_tools import ALLOWED_MODELS
 from .models import (BotChatMessage, BotConversation, BotProfile,
+                     ReportChapter, ReportJob,
                      SearchableField, SearchableTable, TableAccessAudit,
                      TableAccessPolicy)
 
@@ -183,6 +184,37 @@ class BotConversationAdmin(admin.ModelAdmin):
     @admin.display(description="messages")
     def message_count(self, obj):
         return obj.messages.count()
+
+    def has_add_permission(self, request):
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Chaptered reports
+# ---------------------------------------------------------------------------
+
+class ReportChapterInline(admin.TabularInline):
+    model = ReportChapter
+    extra = 0
+    fields = ("index", "title", "status", "word_count", "summary")
+    readonly_fields = fields
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ReportJob)
+class ReportJobAdmin(admin.ModelAdmin):
+    list_display = ("__str__", "user", "status", "chapters_done",
+                    "total_chapters", "created_at")
+    list_filter = ("status", "created_at")
+    search_fields = ("title", "request_text", "user__username")
+    readonly_fields = ("user", "session_key", "conversation", "title",
+                       "request_text", "status", "total_chapters",
+                       "chapters_done", "progress_note", "error",
+                       "created_at", "updated_at")
+    inlines = [ReportChapterInline]
 
     def has_add_permission(self, request):
         return False

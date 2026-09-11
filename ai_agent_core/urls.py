@@ -9,4 +9,8 @@ urlpatterns = [
     path("proxy-debug/", views.proxy_debug, name="proxy_debug"),
     path("chat/", views.bot_chat, name="bot_chat"),
     path("widget-demo/", views.widget_demo, name="widget_demo"),
+    path("reports/<int:job_id>/step/", views.report_step, name="report_step"),
+    path("reports/<int:job_id>/", views.report_status, name="report_status"),
+    path("reports/<int:job_id>/download/", views.report_download,
+         name="report_download"),
 ]
