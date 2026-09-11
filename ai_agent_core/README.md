@@ -309,19 +309,37 @@ prefix inference, and spoof-resistant client-IP resolution.
 
 ### 8.2 Putting the bot icon on screen
 
+The launcher is the **animated "Little Larry" robot SVG** from the source
+repo's `robot_wink.html` — pulsing antenna light and random wink preserved.
+Because it renders from a `viewBox`, **it scales to fit any container**:
+
 ```django
 {% load ai_agent_tags %}
-...
-{% ai_bot_widget %}          {# default active profile #}
-{% ai_bot_widget 3 %}        {# or a specific BotProfile pk #}
+
+{% ai_bot_widget %}                 {# floating launcher, bottom corner #}
+
+<div style="width:120px;height:130px">
+  {% ai_bot_widget inline=True %}   {# robot fills THIS div, any size  #}
+</div>
+
+{% ai_bot_widget 3 inline=True %}   {# specific BotProfile pk          #}
 ```
 
-Drop the tag into your base template (before `</body>`). It renders a
-self-contained floating launcher icon; clicking it opens the chat window in
-the position configured on the profile (left dock / right dock / popup with
-backdrop). No external JS/CSS dependencies; all URLs go through `{% url %}`
-so the widget works untouched behind the JupyterHub double proxy. A
-standalone demo page ships at `…/widget-demo/`.
+* **Floating** (default): fixed launcher in the bottom corner matching the
+  profile's window side.
+* **Inline**: the SVG stretches to 100% of the enclosing element and shrinks/
+  grows with it (aspect ratio preserved). Put it in a header, sidebar, card —
+  anywhere.
+* Clicking the robot opens the chat window in the position configured on the
+  profile (left dock / right dock / popup with backdrop); clicking again (or
+  ✕ / backdrop) closes it.
+* Overrides: set `avatar_image_url` or `avatar_emoji` on the BotProfile to
+  replace the SVG with an image/emoji disc. Leave both blank for the robot.
+* Include the tag **once per page** (element ids are not namespaced). No
+  external JS/CSS dependencies; all URLs go through `{% url %}` so the widget
+  works untouched behind the JupyterHub double proxy. Demo:
+  `…/widget-demo/` (floating) and `…/widget-demo/?inline=1` (inline,
+  resizable container).
 
 ### 8.3 Registering tables & fields from the admin
 

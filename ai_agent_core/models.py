@@ -163,9 +163,10 @@ class BotProfile(models.Model):
 
     name = models.CharField(max_length=80, default="Assistant")
     avatar_emoji = models.CharField(
-        max_length=8, default="\U0001F916",
-        help_text="Emoji shown on the launcher icon (ignored if an image URL "
-                  "is set).")
+        max_length=8, blank=True, default="",
+        help_text="Optional emoji launcher. Leave BLANK to use the built-in "
+                  "animated robot SVG (recommended). Ignored if an image URL "
+                  "is set.")
     avatar_image_url = models.URLField(
         blank=True,
         help_text="Optional image URL for the launcher/avatar.")

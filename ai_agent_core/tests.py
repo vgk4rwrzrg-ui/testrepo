@@ -236,3 +236,38 @@ class BotChatTests(TestCase):
         self.assertContains(r, "aac-launcher")
         self.assertContains(r, "aac-popup")   # window_mode from BotProfile
         self.assertContains(r, "Larry")
+
+
+class WidgetSvgTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from .models import BotProfile
+        BotProfile.objects.create(name="Larry", greeting="Hello!",
+                                  window_mode="right", is_default=True)
+
+    def test_default_launcher_is_animated_svg(self):
+        r = self.client.get("/widget-demo/")
+        self.assertContains(r, "aac-robot")          # the SVG
+        self.assertContains(r, "aac-antenna-light")  # pulsing antenna
+        self.assertContains(r, "aac-eyelid")         # wink animation target
+        self.assertContains(r, "aac-launcher aac-floating")  # fixed launcher
+        self.assertContains(r, 'viewBox="2 2 80 90"')
+        self.assertNotContains(r, "aac-launcher aac-inline")
+
+    def test_inline_mode_fills_container(self):
+        r = self.client.get("/widget-demo/?inline=1")
+        self.assertContains(r, "aac-launcher aac-inline")
+        self.assertNotContains(r, "aac-launcher aac-floating")
+
+    def test_emoji_override_replaces_svg(self):
+        from .models import BotProfile
+        BotProfile.objects.update(avatar_emoji="\U0001F916")
+        r = self.client.get("/widget-demo/")
+        self.assertNotContains(r, '<svg class="aac-robot"')
+        self.assertContains(r, "aac-emoji")
+
+    def test_svg_click_opens_chat_wiring_present(self):
+        r = self.client.get("/widget-demo/")
+        content = r.content.decode()
+        self.assertIn('launcher.addEventListener("click"', content)
+        self.assertIn("aac-panel", content)

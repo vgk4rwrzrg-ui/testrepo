@@ -1,18 +1,45 @@
 {% if bot %}
-{# ======= AI Agent Core floating bot widget (self-contained) ======= #}
+{# ===== AI Agent Core floating bot widget (self-contained, include ONCE per page) ===== #}
 <style>
   :root { --aac-accent: {{ bot.primary_color|default:"#2563eb" }}; }
+
+  /* ---------- launcher (Little Larry SVG scales to ANY container) ---------- */
   .aac-launcher {
+    border: none; cursor: pointer; padding: 0; background: transparent;
+    display: flex; align-items: center; justify-content: center;
+    transition: transform .15s ease; line-height: 0;
+  }
+  .aac-launcher:hover  { transform: scale(1.07); }
+  .aac-launcher:active { transform: scale(0.93); }
+  .aac-launcher.aac-floating {
     position: fixed; bottom: 24px; z-index: 99990;
     {% if bot.window_mode == "left" %}left: 24px;{% else %}right: 24px;{% endif %}
-    width: 60px; height: 60px; border-radius: 50%;
-    background: var(--aac-accent); color: #fff; border: none;
-    font-size: 28px; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.25);
-    display: flex; align-items: center; justify-content: center;
-    transition: transform .15s ease;
+    width: 64px; height: 72px;
   }
-  .aac-launcher:hover { transform: scale(1.08); }
-  .aac-launcher img { width: 60%; height: 60%; border-radius: 50%; }
+  .aac-launcher.aac-inline {          /* fills whatever div you place it in */
+    position: static; width: 100%; height: 100%;
+  }
+  .aac-launcher svg.aac-robot {
+    width: 100%; height: 100%; display: block;
+  }
+  .aac-launcher.aac-emoji {           /* emoji/image avatars keep the disc */
+    background: var(--aac-accent); border-radius: 50%; color: #fff;
+    font-size: 28px; box-shadow: 0 6px 18px rgba(0,0,0,.25);
+  }
+  .aac-launcher.aac-emoji img { width: 60%; height: 60%; border-radius: 50%; }
+  .aac-antenna-light { animation: aac-pulse 1.5s ease-in-out infinite; }
+  @keyframes aac-pulse {
+    0%, 100% { fill: #FF4B2B; }
+    50%      { fill: #FFD700; }
+  }
+  .aac-wink { animation: aac-wink-action 0.3s ease-in-out; }
+  @keyframes aac-wink-action {
+    0%   { transform: translateY(0); }
+    50%  { transform: translateY(12px); }
+    100% { transform: translateY(0); }
+  }
+
+  /* ---------- chat window ---------- */
   .aac-backdrop {
     display: none; position: fixed; inset: 0; z-index: 99991;
     background: rgba(0,0,0,.35);
@@ -25,8 +52,8 @@
     box-shadow: 0 12px 40px rgba(0,0,0,.3);
     flex-direction: column; font: 14px/1.45 system-ui, sans-serif;
   }
-  .aac-panel.aac-right { bottom: 96px; right: 24px; }
-  .aac-panel.aac-left  { bottom: 96px; left: 24px; }
+  .aac-panel.aac-right { bottom: 108px; right: 24px; }
+  .aac-panel.aac-left  { bottom: 108px; left: 24px; }
   .aac-panel.aac-popup {
     top: 50%; left: 50%; transform: translate(-50%, -50%);
     width: 480px; height: 580px;
@@ -37,7 +64,10 @@
     background: var(--aac-accent); color: #fff; padding: 12px 16px;
     display: flex; align-items: center; gap: 10px;
   }
-  .aac-head .aac-avatar { font-size: 22px; }
+  .aac-head .aac-avatar { width: 26px; height: 26px; line-height: 0; }
+  .aac-head .aac-avatar svg, .aac-head .aac-avatar img {
+    width: 100%; height: 100%; border-radius: 50%;
+  }
   .aac-head .aac-title { font-weight: 600; flex: 1; }
   .aac-close { background: none; border: none; color: #fff;
                font-size: 20px; cursor: pointer; }
@@ -66,10 +96,38 @@
   .aac-typing { font-style: italic; color: #889; }
 </style>
 
-<button type="button" class="aac-launcher" id="aac-launcher"
-        aria-label="Open {{ bot.name }} chat">
-  {% if bot.avatar_image_url %}<img src="{{ bot.avatar_image_url }}"
-       alt="{{ bot.name }}">{% else %}{{ bot.avatar_emoji }}{% endif %}
+{# ---------- launcher: Little Larry SVG (default) / image / emoji ---------- #}
+<button type="button" id="aac-launcher"
+        class="aac-launcher {% if inline %}aac-inline{% else %}aac-floating{% endif %}{% if bot.avatar_image_url or bot.avatar_emoji %} aac-emoji{% endif %}"
+        aria-label="Open {{ bot.name }} chat" title="{{ bot.name }}">
+  {% if bot.avatar_image_url %}
+    <img src="{{ bot.avatar_image_url }}" alt="{{ bot.name }}">
+  {% elif bot.avatar_emoji %}
+    {{ bot.avatar_emoji }}
+  {% else %}
+    <svg class="aac-robot" viewBox="2 2 80 90"
+         preserveAspectRatio="xMidYMid meet"
+         xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="{{ bot.name }} robot icon">
+      <!-- Antenna -->
+      <line x1="50" y1="30" x2="50" y2="20" stroke="#4A90E2" stroke-width="4"
+            stroke-linecap="round" />
+      <circle cx="50" cy="18" r="4" class="aac-antenna-light" />
+      <!-- Head/Body -->
+      <rect x="20" y="30" width="60" height="45" rx="12" fill="#4A90E2" />
+      <!-- Left Eye (static) -->
+      <circle cx="38" cy="50" r="5" fill="white" />
+      <!-- Right Eye (winks) -->
+      <g class="aac-wink-group">
+        <circle cx="62" cy="50" r="5" fill="white" />
+        <rect class="aac-eyelid" x="57" y="34" width="10" height="12"
+              fill="#4A90E2" />
+      </g>
+      <!-- Smirk mouth -->
+      <path d="M 40 62 Q 50 68 60 62" stroke="white" stroke-width="3"
+            fill="none" stroke-linecap="round" />
+    </svg>
+  {% endif %}
 </button>
 
 <div class="aac-backdrop" id="aac-backdrop"></div>
@@ -77,8 +135,16 @@
          role="dialog" aria-label="{{ bot.name }} chat">
   <header class="aac-head">
     <span class="aac-avatar">{% if bot.avatar_image_url %}<img
-        src="{{ bot.avatar_image_url }}" alt=""
-        style="width:24px;height:24px;border-radius:50%">{% else %}{{ bot.avatar_emoji }}{% endif %}</span>
+        src="{{ bot.avatar_image_url }}" alt="">{% elif bot.avatar_emoji %}{{ bot.avatar_emoji }}{% else %}<svg
+        viewBox="2 2 80 90" xmlns="http://www.w3.org/2000/svg"><line x1="50"
+        y1="30" x2="50" y2="20" stroke="#fff" stroke-width="4"
+        stroke-linecap="round"/><circle cx="50" cy="18" r="4"
+        fill="#FFD700"/><rect x="20" y="30" width="60" height="45" rx="12"
+        fill="#fff" opacity=".9"/><circle cx="38" cy="50" r="5"
+        fill="var(--aac-accent)"/><circle cx="62" cy="50" r="5"
+        fill="var(--aac-accent)"/><path d="M 40 62 Q 50 68 60 62"
+        stroke="var(--aac-accent)" stroke-width="3" fill="none"
+        stroke-linecap="round"/></svg>{% endif %}</span>
     <span class="aac-title">{{ bot.name }}</span>
     <button type="button" class="aac-close" id="aac-close"
             aria-label="Close">&times;</button>
@@ -96,6 +162,7 @@
 (function () {
   "use strict";
   var chatUrl = "{% url 'ai_agent_core:bot_chat' %}";
+  var GREETING = "{{ bot.greeting|escapejs }}";
   var panel = document.getElementById("aac-panel"),
       backdrop = document.getElementById("aac-backdrop"),
       log = document.getElementById("aac-log"),
@@ -105,17 +172,35 @@
       isPopup = panel.classList.contains("aac-popup"),
       conversationId = null, greeted = false;
 
-  var GREETING = "{{ bot.greeting|escapejs }}";
+  /* ----- Little Larry random wink (preserved from robot_wink.html) ----- */
+  (function () {
+    var eyelid = launcher.querySelector(".aac-eyelid");
+    function triggerWink() {
+      eyelid.classList.add("aac-wink");
+      setTimeout(function () { eyelid.classList.remove("aac-wink"); }, 300);
+      setTimeout(triggerWink, Math.floor(Math.random() * 5000) + 2000);
+    }
+    if (eyelid) triggerWink();
+  })();
 
+  /* ----- open / close ----- */
   function open_() {
     panel.classList.add("aac-open");
     if (isPopup) backdrop.classList.add("aac-open");
+    if (!greeted) { greeted = true; addMsg("bot", GREETING); }
     input.focus();
   }
   function close_() {
     panel.classList.remove("aac-open");
     backdrop.classList.remove("aac-open");
   }
+  launcher.addEventListener("click", function () {
+    panel.classList.contains("aac-open") ? close_() : open_();
+  });
+  document.getElementById("aac-close").addEventListener("click", close_);
+  backdrop.addEventListener("click", close_);
+
+  /* ----- messages ----- */
   function addMsg(role, text) {
     var el = document.createElement("div");
     el.className = "aac-msg aac-" + role;
@@ -141,14 +226,6 @@
     log.appendChild(el);
     log.scrollTop = log.scrollHeight;
   }
-
-  launcher.addEventListener("click", function () {
-    if (panel.classList.contains("aac-open")) { close_(); return; }
-    open_();
-    if (!greeted) { greeted = true; addMsg("bot", GREETING); }
-  });
-  document.getElementById("aac-close").addEventListener("click", close_);
-  backdrop.addEventListener("click", close_);
 
   form.addEventListener("submit", function (ev) {
     ev.preventDefault();
