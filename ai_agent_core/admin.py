@@ -4,6 +4,7 @@ from django.contrib import admin, messages
 
 from .legacy.ai_tools import ALLOWED_MODELS
 from .models import (BotChatMessage, BotConversation, BotProfile,
+                     DocumentTheme, GeneratedDocument,
                      ReportChapter, ReportJob,
                      SearchableField, SearchableTable, TableAccessAudit,
                      TableAccessPolicy)
@@ -215,6 +216,53 @@ class ReportJobAdmin(admin.ModelAdmin):
                        "chapters_done", "progress_note", "error",
                        "created_at", "updated_at")
     inlines = [ReportChapterInline]
+
+    def has_add_permission(self, request):
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Document themes & generated documents
+# ---------------------------------------------------------------------------
+
+@admin.register(DocumentTheme)
+class DocumentThemeAdmin(admin.ModelAdmin):
+    list_display = ("name", "swatch", "heading_font", "body_font",
+                    "is_active", "is_default", "updated_at")
+    list_filter = ("is_active", "is_default")
+    search_fields = ("name",)
+    fieldsets = (
+        (None, {"fields": ("name", "is_active", "is_default")}),
+        ("Colors (hex, e.g. #1F4E79)", {
+            "fields": ("primary_color", "secondary_color", "accent_color",
+                       "text_color", "background_color")}),
+        ("Typography & footer", {
+            "fields": ("heading_font", "body_font", "footer_text")}),
+    )
+
+    @admin.display(description="colors")
+    def swatch(self, obj):
+        from django.utils.html import format_html
+        block = ('<span style="display:inline-block;width:14px;height:14px;'
+                 'border-radius:3px;margin-right:2px;background:{}"></span>')
+        return format_html(block * 3, obj.primary_color,
+                           obj.secondary_color, obj.accent_color)
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        if obj.is_default:
+            DocumentTheme.objects.exclude(pk=obj.pk).update(is_default=False)
+
+
+@admin.register(GeneratedDocument)
+class GeneratedDocumentAdmin(admin.ModelAdmin):
+    list_display = ("filename", "user", "fmt", "theme", "size_bytes",
+                    "created_at")
+    list_filter = ("fmt", "created_at")
+    search_fields = ("filename", "title", "user__username")
+    readonly_fields = ("user", "session_key", "title", "fmt", "filename",
+                       "content_type", "theme", "size_bytes", "created_at")
+    exclude = ("data",)
 
     def has_add_permission(self, request):
         return False

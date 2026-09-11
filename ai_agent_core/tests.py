@@ -430,3 +430,135 @@ class ChapteredReportTests(TestCase):
         content = r.content.decode()
         self.assertIn("runReportJob", content)
         self.assertIn("/reports/0/step/", content)
+
+
+class ThemedDocumentTests(TestCase):
+    """Word / PDF / Excel / PowerPoint output with a custom theme."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from .models import (BotProfile, DocumentTheme, SearchableField,
+                             SearchableTable)
+        cls.bot = BotProfile.objects.create(name="Larry", greeting="Hi!",
+                                            is_default=True)
+        cls.theme = DocumentTheme.objects.create(
+            name="Acme Corporate", primary_color="#123456",
+            secondary_color="#654321", accent_color="#FF8800",
+            heading_font="Georgia", body_font="Verdana",
+            footer_text="Acme Corp — Confidential", is_default=True)
+        cls.hr = Group.objects.create(name="HR")
+        cls.alice = User.objects.create_user("alice", password="pw")
+        cls.alice.groups.add(cls.hr)
+        t = SearchableTable.objects.create(app_label="ai_agent_core",
+                                           model_name="BotProfile")
+        for f in ("id", "name", "greeting"):
+            SearchableField.objects.create(table=t, field_name=f)
+        from . import registry
+        registry.mark_dirty()
+        registry.sync_registry(force=True)
+        p = TableAccessPolicy.objects.create(
+            app_label="ai_agent_core", model_name="BotProfile",
+            access_level="read")
+        p.groups.add(cls.hr)
+
+    def _chat(self, fmt):
+        self.client.login(username="alice", password="pw")
+        return self.client.post(
+            "/chat/", {"message": "find Larry", "output": fmt},
+            content_type="application/json").json()
+
+    def _download(self, data):
+        url = data["document"]["download_url"]
+        path = url.split("//", 1)[-1].split("/", 1)[1]
+        return self.client.get("/" + path)
+
+    def test_widget_dropdown_has_powerpoint(self):
+        r = self.client.get("/widget-demo/")
+        content = r.content.decode()
+        self.assertIn('id="aac-output"', content)
+        for v in ("chat", "word", "pdf", "excel", "ppt"):
+            self.assertIn(f'value="{v}"', content)
+        self.assertIn("PowerPoint", content)
+
+    def test_word_document_generated_and_valid(self):
+        import io
+        from docx import Document
+        data = self._chat("word")
+        self.assertEqual(data["document"]["format"], "word")
+        resp = self._download(data)
+        d = Document(io.BytesIO(resp.content))
+        text = "\n".join(p.text for p in d.paragraphs)
+        self.assertIn("find Larry", text)
+
+    def test_pdf_document_generated(self):
+        data = self._chat("pdf")
+        resp = self._download(data)
+        self.assertTrue(resp.content.startswith(b"%PDF"))
+
+    def test_excel_document_generated_with_data_sheet(self):
+        import io
+        from openpyxl import load_workbook
+        data = self._chat("excel")
+        wb = load_workbook(io.BytesIO(self._download(data).content))
+        joined = " ".join(str(c.value) for ws in wb.worksheets
+                          for row in ws.iter_rows() for c in row)
+        self.assertIn("Larry", joined)
+
+    def test_powerpoint_generated_with_custom_theme(self):
+        import io
+        from pptx import Presentation
+        from pptx.util import Pt
+        data = self._chat("ppt")
+        self.assertEqual(data["document"]["format"], "ppt")
+        prs = Presentation(io.BytesIO(self._download(data).content))
+        self.assertGreaterEqual(len(prs.slides), 2)   # title + content
+        texts, fonts, colors = [], set(), set()
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for p in shape.text_frame.paragraphs:
+                        for run in p.runs:
+                            texts.append(run.text)
+                            if run.font.name:
+                                fonts.add(run.font.name)
+                            if run.font.color and run.font.color.type is not None:
+                                colors.add(str(run.font.color.rgb))
+        blob = " ".join(texts)
+        self.assertIn("find Larry", blob)                    # title slide
+        self.assertIn("Acme Corp — Confidential", blob)      # themed footer
+        self.assertIn("Georgia", fonts)                      # heading font
+        self.assertIn("Verdana", fonts)                      # body font
+        self.assertIn("123456", {c.upper() for c in colors} |
+                                {c for c in colors})         # primary color
+
+    def test_powerpoint_aliases(self):
+        for alias in ("pptx", "powerpoint"):
+            data = self._chat(alias)
+            self.assertEqual(data["document"]["format"], "ppt", alias)
+
+    def test_report_downloads_as_powerpoint(self):
+        self.client.login(username="alice", password="pw")
+        job_id = self.client.post(
+            "/chat/", {"message": "generate a report on Larry with 3 chapters"},
+            content_type="application/json").json()["report_job"]
+        for _ in range(4):
+            self.client.post(f"/reports/{job_id}/step/")
+        r = self.client.get(f"/reports/{job_id}/download/?format=ppt")
+        self.assertEqual(r.status_code, 200)
+        import io
+        from pptx import Presentation
+        prs = Presentation(io.BytesIO(r.content))
+        self.assertGreaterEqual(len(prs.slides), 4)  # title + 3 chapters
+        r = self.client.get(f"/reports/{job_id}/download/?format=word")
+        self.assertEqual(r.status_code, 200)
+
+    def test_document_owner_scoping(self):
+        data = self._chat("word")
+        self.client.logout()
+        User.objects.create_user("mallory", password="pw")
+        self.client.login(username="mallory", password="pw")
+        self.assertEqual(self._download(data).status_code, 404)
+
+    def test_chat_format_returns_no_document(self):
+        data = self._chat("chat")
+        self.assertNotIn("document", data)

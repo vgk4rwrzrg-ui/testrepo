@@ -462,3 +462,22 @@ def report_writer(mode, user, job, context):
 Without the setting, a built-in writer composes each chapter from guarded
 table-search results (policies + audit apply), so the pipeline works end to
 end out of the box.
+
+
+---
+
+## 10. Themed document output (Word / PDF / Excel / PowerPoint)
+
+The chat form has a format dropdown (💬 Chat, 📄 Word, 📕 PDF, 📊 Excel,
+📽 PowerPoint). Non-chat formats build a **themed document** from the
+answer via `documents.py` — one neutral spec, four exporters (python-docx,
+reportlab, openpyxl, python-pptx; each optional, reported as unavailable if
+missing). Finished reports download in any of the same formats via
+`reports/<id>/download/?format=word|pdf|excel|ppt`.
+
+Themes are DB-managed (`DocumentTheme`, admin: colors, heading/body fonts,
+footer text; one default) and applied consistently: headings/table headers
+in the primary color, footers in the secondary, PowerPoint gets a title
+slide with accent bar, agenda, per-section slides and themed data tables.
+Generated files are stored owner-scoped (`GeneratedDocument`, 404 for
+anyone else). End-user documentation lives in **[USER_GUIDE.md](USER_GUIDE.md)**.

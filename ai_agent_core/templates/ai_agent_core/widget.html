@@ -117,6 +117,11 @@
   .aac-card td:first-child { color: var(--aac-muted); white-space: nowrap; }
   .aac-form { display: flex; border-top: 1px solid var(--aac-border);
               background: var(--aac-surface); }
+  .aac-output { flex: 0 0 auto; max-width: 6.5rem; border: none;
+                border-right: 1px solid var(--aac-border);
+                background: var(--aac-log-bg); color: var(--aac-text);
+                padding: 0 6px; font: inherit; font-size: 13px;
+                outline: none; cursor: pointer; }
   .aac-input { flex: 1; border: none; padding: 12px 14px; font: inherit;
                outline: none; background: var(--aac-surface);
                color: var(--aac-text); }
@@ -182,6 +187,13 @@
   <div class="aac-log" id="aac-log"></div>
   <form class="aac-form" id="aac-form">
     {% csrf_token %}
+    <select class="aac-output" id="aac-output" title="Answer format">
+      <option value="chat">&#128172; Chat</option>
+      <option value="word">&#128196; Word</option>
+      <option value="pdf">&#128213; PDF</option>
+      <option value="excel">&#128202; Excel</option>
+      <option value="ppt">&#128253; PowerPoint</option>
+    </select>
     <input class="aac-input" id="aac-input" autocomplete="off"
            placeholder="{{ bot.placeholder_text }}">
     <button class="aac-send" type="submit">Send</button>
@@ -202,6 +214,7 @@
       form = document.getElementById("aac-form"),
       input = document.getElementById("aac-input"),
       launcher = document.getElementById("aac-launcher"),
+      output = document.getElementById("aac-output"),
       isPopup = panel.classList.contains("aac-popup"),
       conversationId = null, greeted = false;
 
@@ -345,11 +358,16 @@
           progress.classList.remove("aac-typing");
           var card = document.createElement("div");
           card.className = "aac-card";
-          card.innerHTML = "<b>Report ready</b><br>" +
-            '<a href="' + data.download_url + '" download ' +
-            'style="color:var(--aac-accent);font-weight:600">' +
-            "⬇ Download the full report (" + data.total_chapters +
-            " chapters)</a>";
+          var fmts = [["", "Markdown"], ["?format=word", "Word"],
+                      ["?format=pdf", "PDF"], ["?format=excel", "Excel"],
+                      ["?format=ppt", "PowerPoint"]];
+          var links = fmts.map(function (f) {
+            return '<a href="' + data.download_url + f[0] + '" download ' +
+                   'style="color:var(--aac-accent);font-weight:600;' +
+                   'margin-right:10px">⬇ ' + f[1] + "</a>";
+          }).join("");
+          card.innerHTML = "<b>Report ready (" + data.total_chapters +
+                           " chapters)</b><br>" + links;
           log.appendChild(card);
           log.scrollTop = log.scrollHeight;
           return;
@@ -379,13 +397,25 @@
         "X-CSRFToken": form.querySelector("[name=csrfmiddlewaretoken]").value
       },
       credentials: "same-origin",
-      body: JSON.stringify({message: msg, conversation_id: conversationId})
+      body: JSON.stringify({message: msg, conversation_id: conversationId,
+                            output: output ? output.value : "chat"})
     }).then(function (r) { return r.json(); }).then(function (data) {
       typing.remove();
       if (data.error) { addMsg("bot", "Error: " + data.error); return; }
       conversationId = data.conversation_id;
       addMsg("bot", data.reply);
       (data.results || []).forEach(addCard);
+      if (data.document) {
+        var dcard = document.createElement("div");
+        dcard.className = "aac-card";
+        dcard.innerHTML = "<b>Document ready</b><br>" +
+          '<a href="' + data.document.download_url + '" download ' +
+          'style="color:var(--aac-accent);font-weight:600">⬇ ' +
+          String(data.document.filename).replace(/</g, "&lt;") + "</a>";
+        log.appendChild(dcard);
+        log.scrollTop = log.scrollHeight;
+      }
+      if (data.document_error) addMsg("bot", "Document: " + data.document_error);
       if (data.report_job) runReportJob(data.report_job);
     }).catch(function () {
       typing.remove();

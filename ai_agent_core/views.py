@@ -116,13 +116,56 @@ def bot_chat(request):
     BotChatMessage.objects.create(conversation=conversation, role="bot",
                                   content=result["reply"],
                                   results=result["results"])
-    return JsonResponse({
+    response = {
         "reply": result["reply"],
         "results": result["results"] if (bot is None or bot.show_result_cards)
                    else [],
         "conversation_id": conversation.pk,
         "bot": {"name": getattr(bot, "name", "Assistant")},
-    })
+    }
+
+    # Optional document output (Word / PDF / Excel / PowerPoint dropdown)
+    from .documents import normalize_format
+    fmt = normalize_format(payload.get("output") or "")
+    if fmt:
+        doc, err = _generate_chat_document(request, fmt, message, result, bot)
+        if err:
+            response["document_error"] = err
+        else:
+            response["document"] = {
+                "filename": doc.filename,
+                "format": doc.fmt,
+                "download_url": request.build_absolute_uri(reverse(
+                    "ai_agent_core:document_download", args=[doc.pk])),
+            }
+    return JsonResponse(response)
+
+
+def _generate_chat_document(request, fmt, message, result, bot):
+    """Build + store a themed document from a chat answer."""
+    from .documents import build_document, get_default_theme, spec_from_chat
+    from .models import GeneratedDocument
+    try:
+        theme = get_default_theme()
+        spec = spec_from_chat(message, result["reply"], result["results"],
+                              bot)
+        data, ctype, ext = build_document(fmt, spec, theme)
+    except RuntimeError as exc:      # library missing on this install
+        return None, str(exc)
+    except Exception:                # never break the chat over a document
+        import logging
+        logging.getLogger(__name__).exception("document build failed")
+        return None, "Document generation failed."
+    slug = "".join(ch if ch.isalnum() or ch in "-_ " else ""
+                   for ch in message[:60]).strip().replace(" ", "_") or "answer"
+    if not request.session.session_key:
+        request.session.save()
+    doc = GeneratedDocument.objects.create(
+        user=request.user if request.user.is_authenticated else None,
+        session_key=request.session.session_key or "",
+        title=message[:200], fmt=fmt, filename=f"{slug}.{ext}",
+        content_type=ctype, data=data, theme=theme, size_bytes=len(data))
+    return doc, None
 
 
 def widget_demo(request):
@@ -173,14 +216,40 @@ def report_status(request, job_id: int):
 
 
 def report_download(request, job_id: int):
-    """The assembled report as a markdown download."""
+    """The assembled report: markdown by default, or a themed document via
+    ``?format=word|pdf|excel|ppt`` (aliases docx/xlsx/pptx/powerpoint)."""
     job = _get_owned_job(request, job_id)
     if job.status != ReportJob.Status.DONE:
         return JsonResponse({"error": "Report is not finished yet.",
                              "status": job.status}, status=409)
-    md = assemble_markdown(job)
     slug = "".join(c if c.isalnum() or c in "-_ " else ""
                    for c in job.title).strip().replace(" ", "_") or "report"
+
+    from .documents import (build_document, get_default_theme,
+                            normalize_format, spec_from_report)
+    fmt = normalize_format(request.GET.get("format") or "")
+    if fmt:
+        try:
+            data, ctype, ext = build_document(fmt, spec_from_report(job),
+                                              get_default_theme())
+        except RuntimeError as exc:
+            return JsonResponse({"error": str(exc)}, status=501)
+        resp = HttpResponse(data, content_type=ctype)
+        resp["Content-Disposition"] = f'attachment; filename="{slug}.{ext}"'
+        return resp
+
+    md = assemble_markdown(job)
     resp = HttpResponse(md, content_type="text/markdown; charset=utf-8")
     resp["Content-Disposition"] = f'attachment; filename="{slug}.md"'
+    return resp
+
+
+def document_download(request, doc_id: int):
+    """Download a generated Word/PDF/Excel/PowerPoint file (owner-scoped)."""
+    from .models import GeneratedDocument
+    doc = GeneratedDocument.objects.filter(pk=doc_id).first()
+    if doc is None or not doc.owned_by(request):
+        raise Http404("Document not found.")
+    resp = HttpResponse(bytes(doc.data), content_type=doc.content_type)
+    resp["Content-Disposition"] = f'attachment; filename="{doc.filename}"'
     return resp

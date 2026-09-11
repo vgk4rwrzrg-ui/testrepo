@@ -418,3 +418,77 @@ class ReportChapter(models.Model):
 
     def __str__(self):
         return f"Ch.{self.index} {self.title} [{self.status}]"
+
+
+# ===========================================================================
+# Document themes + generated document storage
+# ===========================================================================
+
+class DocumentTheme(models.Model):
+    """Custom corporate theme applied to Word, PDF, Excel and PowerPoint
+    output (colors, fonts, footer). Managed in the admin; the active
+    default is used unless a request names another theme."""
+
+    name = models.CharField(max_length=80, unique=True)
+    primary_color = models.CharField(
+        max_length=7, default="#1F4E79",
+        help_text="Hex. Title slides, headings, table header fills.")
+    secondary_color = models.CharField(
+        max_length=7, default="#2E75B6",
+        help_text="Hex. Subheadings, footers, table grid lines.")
+    accent_color = models.CharField(
+        max_length=7, default="#C00000",
+        help_text="Hex. PowerPoint accent bars and highlights.")
+    text_color = models.CharField(max_length=7, default="#1A1A24")
+    background_color = models.CharField(
+        max_length=7, default="#FFFFFF",
+        help_text="Hex. Slide background (PowerPoint).")
+    heading_font = models.CharField(max_length=60, default="Calibri Light")
+    body_font = models.CharField(max_length=60, default="Calibri")
+    footer_text = models.CharField(
+        max_length=200, blank=True,
+        help_text="Shown in document footers / slide footers.")
+    is_active = models.BooleanField(default=True)
+    is_default = models.BooleanField(
+        default=False, help_text="Used when no theme is specified.")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-is_default", "name"]
+
+    def __str__(self):
+        return f"{self.name}{' (default)' if self.is_default else ''}"
+
+
+class GeneratedDocument(models.Model):
+    """A finished Word/PDF/Excel/PowerPoint file, stored for download."""
+
+    user = models.ForeignKey(
+        "auth.User", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="generated_documents")
+    session_key = models.CharField(max_length=64, blank=True, db_index=True)
+    title = models.CharField(max_length=200)
+    fmt = models.CharField(max_length=10)          # word|pdf|excel|ppt
+    filename = models.CharField(max_length=220)
+    content_type = models.CharField(max_length=120)
+    data = models.BinaryField()
+    theme = models.ForeignKey(DocumentTheme, null=True, blank=True,
+                              on_delete=models.SET_NULL)
+    size_bytes = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.filename} ({self.size_bytes} B)"
+
+    def owned_by(self, request) -> bool:
+        if getattr(request.user, "is_superuser", False):
+            return True
+        if self.user_id:
+            return request.user.is_authenticated and \
+                request.user.pk == self.user_id
+        return bool(self.session_key) and \
+            request.session.session_key == self.session_key

@@ -13,4 +13,6 @@ urlpatterns = [
     path("reports/<int:job_id>/", views.report_status, name="report_status"),
     path("reports/<int:job_id>/download/", views.report_download,
          name="report_download"),
+    path("documents/<int:doc_id>/download/", views.document_download,
+         name="document_download"),
 ]
