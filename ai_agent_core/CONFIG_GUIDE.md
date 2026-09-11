@@ -204,13 +204,57 @@ Instructions:
    `engine: {model: gpt-4o}` is valid.
 2. **Adding a second profile:** drop `prod.yaml` in the same directory and
    set `AI_AGENT_PROFILE=prod`. Files: `<name>.yaml` ↔ profile `<name>`.
-3. **JSON variant** (if PyYAML isn't installed you get warning W002 and only
-   JSON loads):
+3. **JSON variant — `default.json`** (full example shipped at
+   `deploy/config/default.json`). Use JSON when PyYAML isn't installed
+   (warning W002 means only JSON will load). Same directory, same profile
+   name — the loader tries `default.yaml`, then `default.yml`, then
+   `default.json`. This file is the exact JSON mirror of the YAML above:
 
    ```json
-   {"agent": {"name": "larry"},
-    "engine": {"provider": "openai_compat", "model": "gpt-4o-mini"}}
+   {
+     "agent": {
+       "name": "larry",
+       "personality": {
+         "tone": "professional",
+         "system_prompt": "You are Larry, an enterprise data assistant. Answer only from data returned by the table-search tools."
+       }
+     },
+     "engine": {
+       "provider": "openai_compat",
+       "model": "gpt-4o-mini",
+       "temperature": 0.1,
+       "max_tokens": 2048,
+       "timeout_seconds": 60
+     },
+     "tools": {
+       "table_search": {
+         "enabled": true,
+         "default_limit": 50
+       }
+     }
+   }
    ```
+
+   JSON-specific rules (these are the ones that bite):
+   - **No comments allowed** — `//` or `#` anywhere makes the whole file
+     fail with `ImproperlyConfigured`. Keep notes in the YAML twin or a
+     README.
+   - **No trailing commas** after the last item of an object/array.
+   - Booleans/null are lowercase JSON: `true`, `false`, `null`
+     (YAML's `True`/`yes` don't exist here). `"max_tokens": null` =
+     provider default.
+   - Top level **must be an object** `{...}` — a list or bare string is
+     rejected.
+   - Same deep-merge and same **live hot-reload on edit** as YAML; every
+     key is still optional, so a minimal file is fine:
+
+   ```json
+   {"engine": {"model": "gpt-4o"}}
+   ```
+
+   - If both `default.yaml` and `default.json` exist, **YAML wins** (suffix
+     search order) and the JSON file is ignored — keep only one per
+     profile name to avoid confusion.
 
 4. **Reading values in your own code:**
 
@@ -282,6 +326,30 @@ Instructions:
 3. To add profiles, add more keys under `data:` (`prod.yaml: |`, ...); switch
    pods between them with the `AI_AGENT_PROFILE` env var (that part *is* a
    restart, it's an env var).
+4. **JSON in a ConfigMap** works identically — the file just carries a
+   `.json` key. Useful when the image doesn't ship PyYAML:
+
+   ```yaml
+   apiVersion: v1
+   kind: ConfigMap
+   metadata:
+     name: ai-agent-profiles
+     namespace: jupyterhub
+   data:
+     default.json: |
+       {
+         "agent": {"name": "larry"},
+         "engine": {
+           "provider": "openai_compat",
+           "model": "gpt-4o-mini",
+           "temperature": 0.1
+         }
+       }
+   ```
+
+   (The outer file is YAML because Kubernetes manifests are YAML; the
+   *inner* block after `default.json: |` is the raw JSON profile, indented.
+   Same no-comments / no-trailing-comma rules as section 3.)
 
 ---
 
