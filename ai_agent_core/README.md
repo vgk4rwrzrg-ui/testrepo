@@ -359,7 +359,36 @@ everyone with table access — or select Groups to make the field visible
 nor may filter/order on it. (For legacy-allowlisted tables, use
 `TableAccessPolicy.allowed_fields` per group instead.)
 
-### 8.5 Chat pipeline & LLM hook
+### 8.5 Dark mode / light mode
+
+The widget is fully theme-aware. Every color (panel, bubbles, cards, input,
+borders) is driven by CSS variables with a light and a dark palette; the
+active palette is chosen at runtime:
+
+1. **BotProfile.theme_mode** — `Auto` (default), `Always light`, or
+   `Always dark` (radio buttons in the admin).
+2. In **Auto**, the widget detects the host page's theme from markers on
+   `<html>`/`<body>`: `data-theme`, `data-bs-theme` (Bootstrap 5.3),
+   `data-color-scheme`, `data-mode` attributes, or `dark`/`dark-mode`/
+   `theme-dark` classes (covers Tailwind's `dark` class strategy) — and the
+   light equivalents.
+3. If the site declares nothing, it follows the OS via
+   `prefers-color-scheme`.
+
+Theme switches are **live**: a `MutationObserver` watches `<html>`/`<body>`
+attribute/class flips (site toggle buttons) and a `matchMedia` listener
+tracks OS changes — the open chat window restyles instantly, no reload.
+For custom theme systems, call the manual hook:
+
+```js
+window.aacSetTheme("dark");   // or "light" | "auto"
+```
+
+The demo page (`…/widget-demo/`) includes a "Toggle site dark mode" button
+to see it live. `color-scheme` is set on the panel so native controls
+(scrollbars, inputs) also render in the correct mode.
+
+### 8.6 Chat pipeline & LLM hook
 
 `POST …/chat/` (CSRF-protected JSON: `{"message", "conversation_id"}`)
 persists the thread (`BotConversation`/`BotChatMessage`, browsable read-only

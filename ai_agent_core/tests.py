@@ -271,3 +271,41 @@ class WidgetSvgTests(TestCase):
         content = r.content.decode()
         self.assertIn('launcher.addEventListener("click"', content)
         self.assertIn("aac-panel", content)
+
+
+class WidgetThemeTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from .models import BotProfile
+        cls.bot = BotProfile.objects.create(name="Larry", greeting="Hi!",
+                                            is_default=True)
+
+    def test_auto_mode_renders_theme_machinery(self):
+        r = self.client.get("/widget-demo/")
+        content = r.content.decode()
+        self.assertIn('data-aac-mode="auto"', content)
+        self.assertIn('data-aac-theme="dark"', content)     # dark palette CSS
+        self.assertIn("prefers-color-scheme: dark", content)  # OS hook
+        self.assertIn("data-bs-theme", content)             # Bootstrap hook
+        self.assertIn("MutationObserver", content)          # live site toggles
+        self.assertIn("window.aacSetTheme", content)        # manual hook
+
+    def test_forced_dark_mode_is_rendered(self):
+        from .models import BotProfile
+        BotProfile.objects.update(theme_mode="dark")
+        r = self.client.get("/widget-demo/")
+        self.assertContains(r, 'data-aac-mode="dark"')
+
+    def test_forced_light_mode_is_rendered(self):
+        from .models import BotProfile
+        BotProfile.objects.update(theme_mode="light")
+        r = self.client.get("/widget-demo/")
+        self.assertContains(r, 'data-aac-mode="light"')
+
+    def test_dark_palette_uses_css_variables(self):
+        r = self.client.get("/widget-demo/")
+        content = r.content.decode()
+        self.assertIn("--aac-surface: #1f2937", content)
+        self.assertIn("--aac-log-bg: #111827", content)
+        # panel colors are variable-driven, not hardcoded
+        self.assertIn("background: var(--aac-surface)", content)

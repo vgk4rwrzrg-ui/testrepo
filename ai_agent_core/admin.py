@@ -102,16 +102,18 @@ class TableAccessAuditAdmin(admin.ModelAdmin):
 
 @admin.register(BotProfile)
 class BotProfileAdmin(admin.ModelAdmin):
-    list_display = ("name", "window_mode", "primary_color", "is_active",
-                    "is_default", "updated_at")
-    list_filter = ("window_mode", "is_active", "is_default")
+    list_display = ("name", "window_mode", "theme_mode", "primary_color",
+                    "is_active", "is_default", "updated_at")
+    list_filter = ("window_mode", "theme_mode", "is_active", "is_default")
     search_fields = ("name",)
-    radio_fields = {"window_mode": admin.HORIZONTAL}
+    radio_fields = {"window_mode": admin.HORIZONTAL,
+                    "theme_mode": admin.HORIZONTAL}
     fieldsets = (
         ("Identity", {"fields": ("name", "avatar_emoji", "avatar_image_url",
                                   "greeting", "personality", "system_prompt")}),
-        ("Chat window", {"fields": ("window_mode", "primary_color",
-                                    "placeholder_text", "show_result_cards")}),
+        ("Chat window", {"fields": ("window_mode", "theme_mode",
+                                    "primary_color", "placeholder_text",
+                                    "show_result_cards")}),
         ("Status", {"fields": ("is_active", "is_default")}),
     )
 

@@ -185,6 +185,18 @@ class BotProfile(models.Model):
         max_length=10, choices=WindowMode.choices, default=WindowMode.RIGHT,
         help_text="Where the chat window appears: docked left, docked right, "
                   "or a centered popup.")
+
+    class ThemeMode(models.TextChoices):
+        AUTO = "auto", "Auto (follow site / OS dark mode)"
+        LIGHT = "light", "Always light"
+        DARK = "dark", "Always dark"
+
+    theme_mode = models.CharField(
+        max_length=10, choices=ThemeMode.choices, default=ThemeMode.AUTO,
+        help_text="Auto detects the host page's dark/light mode "
+                  "(data-theme / data-bs-theme / 'dark' class on <html>/<body>) "
+                  "and falls back to the OS prefers-color-scheme; or force "
+                  "one theme.")
     primary_color = models.CharField(
         max_length=7, default="#2563eb",
         help_text="Hex accent color for the widget.")
