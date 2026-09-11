@@ -890,3 +890,24 @@ class RouterIntegrationTests(TestCase):
         self.assertIn("sources", ctx)
         self.assertIn("model", ctx)
         self.assertIn("compute_data", ctx["tools"])
+
+
+class UserGuideLinkTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from .models import BotProfile
+        BotProfile.objects.create(name="Larry", greeting="Hi!", is_default=True)
+
+    def test_widget_header_links_to_guide(self):
+        r = self.client.get("/widget-demo/")
+        self.assertContains(r, 'class="aac-help"')
+        self.assertContains(r, 'href="/guide/"')
+        self.assertContains(r, 'target="_blank"')
+
+    def test_guide_page_renders_markdown(self):
+        r = self.client.get("/guide/")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "User Guide")
+        self.assertContains(r, "Sources &amp; audit trail")  # from USER_GUIDE.md
+        self.assertContains(r, "PowerPoint")
+        self.assertContains(r, "<h2")                        # rendered, not raw

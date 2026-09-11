@@ -558,3 +558,10 @@ field narrowing and audit log. Point `AI_AGENT_LLM_HANDLER` /
 `AI_AGENT_REPORT_WRITER` at your router if you also want Larry to answer
 through it. The legacy `llllm/` package is untouched and keeps working
 as-is.
+
+The user guide is served at `guide/` (`ai_agent_core:user_guide`, rendered
+from `USER_GUIDE.md` with the `markdown` package if installed, plain-text
+fallback otherwise) and linked from the chat header's **? Guide** button.
+`llllm/llm/orchestrator.py` now prefers `ai_agent_core.integrations` (falls
+back to `llm.tool_def` if the app is absent) and its system prompt forbids
+mental arithmetic in favour of `compute_data`.

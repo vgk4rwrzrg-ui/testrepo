@@ -15,6 +15,7 @@ Click the robot icon (Little Larry — he winks). The chat window opens where
 your administrator configured it: docked left, docked right, or as a
 centered popup. Click the robot again, the ✕, or the backdrop to close.
 The window automatically matches your site/OS **dark or light mode**.
+The **? Guide** button in the chat header opens this guide in a new tab.
 
 ## 2. Asking questions
 

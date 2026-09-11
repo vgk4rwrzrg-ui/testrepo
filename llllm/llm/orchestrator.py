@@ -42,7 +42,8 @@ def consolidate_history(history: List[Dict[str, str]]) -> List[Dict[str, str]]:
         return to_keep
 
 MAX_TOOL_ITERATIONS = 10
-DATA_TOOLS = {"fetch_data", "aggregate_data", "fetch_related"}
+DATA_TOOLS = {"fetch_data", "aggregate_data", "fetch_related",
+              "compute_data"}
 
 
 def _audit_entry(tool_name, args, result_str):
@@ -69,7 +70,10 @@ def _audit_entry(tool_name, args, result_str):
 
 def process_chat(request, user_message, extra_system=""):
     from llm.router import RoutingRequest
-    from llm.tool_def import TOOL_SCHEMAS, execute_tool
+    try:  # ai_agent_core: same interface + compute_data, policy-checked & audited
+        from ai_agent_core.integrations import TOOL_SCHEMAS, execute_tool
+    except ImportError:  # ai_agent_core not installed -> legacy tools
+        from llm.tool_def import TOOL_SCHEMAS, execute_tool
 
     history = request.session.get('little_larry_history', [])
     history.append({"role": "user", "content": user_message})
@@ -94,6 +98,17 @@ def process_chat(request, user_message, extra_system=""):
         "and computing yourself — the database result is authoritative. When you "
         "present a calculated figure, state its method briefly, e.g. "
         "'Average = 340 hours / 12 members (TimeLog, Jan–Mar 2025)'. "
+        # --- ai_agent_core: keep ALL arithmetic in the audited database path ---
+        "NEVER perform arithmetic yourself — not even simple division or "
+        "percentages on rows you already fetched. For ANY formula across "
+        "fields (e.g. 'A / B * A', ratios, rates, differences, per-unit "
+        "figures) call compute_data; it runs in the database, handles "
+        "division by zero (null), can reach related tables via "
+        "'Relation__field' operands and other tables via 'scalars', and its "
+        "formula and result are audited. Report the number compute_data "
+        "returns verbatim, together with the expression you used. If a "
+        "formula cannot be expressed with compute_data, say so rather than "
+        "estimating. "
     )
     if extra_system:
         system_prompt += "\n\n" + extra_system

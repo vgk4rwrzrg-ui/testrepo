@@ -95,6 +95,11 @@
   .aac-head .aac-title { font-weight: 600; flex: 1; }
   .aac-close { background: none; border: none; color: #fff;
                font-size: 20px; cursor: pointer; }
+  .aac-help { color: #fff; opacity: .85; text-decoration: none;
+              font-size: 13px; font-weight: 600; margin-right: 8px;
+              border: 1px solid rgba(255,255,255,.6); border-radius: 10px;
+              padding: 1px 8px; }
+  .aac-help:hover { opacity: 1; }
   .aac-log { flex: 1; overflow-y: auto; padding: 14px;
              background: var(--aac-log-bg); display: flex;
              flex-direction: column; gap: 10px; }
@@ -189,6 +194,8 @@
         stroke="var(--aac-accent)" stroke-width="3" fill="none"
         stroke-linecap="round"/></svg>{% endif %}</span>
     <span class="aac-title">{{ bot.name }}</span>
+    <a class="aac-help" href="{% url 'ai_agent_core:user_guide' %}"
+       target="_blank" rel="noopener" title="How to use {{ bot.name }}">? Guide</a>
     <button type="button" class="aac-close" id="aac-close"
             aria-label="Close">&times;</button>
   </header>

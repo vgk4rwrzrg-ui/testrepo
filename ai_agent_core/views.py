@@ -257,3 +257,23 @@ def document_download(request, doc_id: int):
     resp = HttpResponse(bytes(doc.data), content_type=doc.content_type)
     resp["Content-Disposition"] = f'attachment; filename="{doc.filename}"'
     return resp
+
+
+def user_guide(request):
+    """Render USER_GUIDE.md as a themed HTML page (linked from the widget)."""
+    import os
+    from django.utils.html import escape
+    path = os.path.join(os.path.dirname(__file__), "USER_GUIDE.md")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            md = fh.read()
+    except OSError:
+        raise Http404("User guide not found.")
+    try:
+        import markdown
+        body = markdown.markdown(md, extensions=["tables", "fenced_code"])
+    except ImportError:  # no markdown lib: readable plain-text fallback
+        body = f"<pre style='white-space:pre-wrap'>{escape(md)}</pre>"
+    bot = BotProfile.get_default()
+    return render(request, "ai_agent_core/user_guide.html",
+                  {"body": body, "bot": bot})
