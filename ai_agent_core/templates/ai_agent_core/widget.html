@@ -2,18 +2,20 @@
 {# ===== AI Agent Core bot widget — theme-aware, self-contained, include ONCE per page ===== #}
 <div id="aac-root" data-aac-mode="{{ bot.theme_mode|default:'auto' }}">
 <style>
-  /* ---------- theme palettes (light default, dark override) ---------- */
-  #aac-root {
+  /* ---------- theme palettes (light default, dark override) ----------
+     Variables live on BOTH roots: #aac-root (launcher) and #aac-overlay
+     (panel + backdrop, which JS re-parents to <body>).                    */
+  #aac-root, #aac-overlay {
     --aac-accent: {{ bot.primary_color|default:"#2563eb" }};
-    --aac-surface: #ffffff;      /* panel / bubbles / cards   */
-    --aac-log-bg: #f5f7fb;       /* message log background    */
-    --aac-text: #1f2430;         /* primary text              */
-    --aac-muted: #667085;        /* secondary text            */
-    --aac-border: #e3e7ef;       /* hairlines                 */
+    --aac-surface: #ffffff;
+    --aac-log-bg: #f5f7fb;
+    --aac-text: #1f2430;
+    --aac-muted: #667085;
+    --aac-border: #e3e7ef;
     --aac-shadow: rgba(0, 0, 0, .30);
     --aac-scheme: light;
   }
-  #aac-root[data-aac-theme="dark"] {
+  #aac-root[data-aac-theme="dark"], #aac-overlay[data-aac-theme="dark"] {
     --aac-surface: #1f2937;
     --aac-log-bg: #111827;
     --aac-text: #e5e7eb;
@@ -23,7 +25,7 @@
     --aac-scheme: dark;
   }
 
-  /* ---------- launcher (Little Larry SVG scales to ANY container) ---------- */
+  /* ---------- launcher ---------- */
   .aac-launcher {
     border: none; cursor: pointer; padding: 0; background: transparent;
     display: flex; align-items: center; justify-content: center;
@@ -36,115 +38,138 @@
     {% if bot.window_mode == "left" %}left: 24px;{% else %}right: 24px;{% endif %}
     width: 64px; height: 72px;
   }
-  .aac-launcher.aac-inline {          /* fills whatever div you place it in */
-    position: static; width: 100%; height: 100%;
-  }
+  .aac-launcher.aac-inline { position: static; width: 100%; height: 100%; }
   .aac-launcher svg.aac-robot { width: 100%; height: 100%; display: block; }
   #aac-root[data-aac-theme="dark"] .aac-launcher svg.aac-robot {
     filter: drop-shadow(0 0 6px rgba(74, 144, 226, .55));
   }
-  .aac-launcher.aac-emoji {           /* emoji/image avatars keep the disc */
+  .aac-launcher.aac-emoji {
     background: var(--aac-accent); border-radius: 50%; color: #fff;
     font-size: 28px; box-shadow: 0 6px 18px var(--aac-shadow);
   }
   .aac-launcher.aac-emoji img { width: 60%; height: 60%; border-radius: 50%; }
+  .aac-launcher.aac-hidden { visibility: hidden; }
   .aac-antenna-light { animation: aac-pulse 1.5s ease-in-out infinite; }
-  @keyframes aac-pulse {
-    0%, 100% { fill: #FF4B2B; }
-    50%      { fill: #FFD700; }
-  }
+  @keyframes aac-pulse { 0%, 100% { fill: #FF4B2B; } 50% { fill: #FFD700; } }
   .aac-wink { animation: aac-wink-action 0.3s ease-in-out; }
   @keyframes aac-wink-action {
-    0%   { transform: translateY(0); }
-    50%  { transform: translateY(12px); }
-    100% { transform: translateY(0); }
+    0% { transform: translateY(0); } 50% { transform: translateY(12px); } 100% { transform: translateY(0); }
   }
 
-  /* ---------- chat window ---------- */
+  /* ---------- overlay layer (re-parented to <body> by JS) ---------- */
+  #aac-overlay { position: static; }
   .aac-backdrop {
-    display: none; position: fixed; inset: 0; z-index: 99991;
-    background: rgba(0, 0, 0, .45);
+    display: none; position: fixed; top: 0; right: 0; bottom: 0; left: 0;
+    z-index: 99991; background: rgba(0, 0, 0, .45);
   }
+  .aac-backdrop.aac-open { display: block; }
+
+  /* ---------- chat panel: base = bottom-right, every mode overrides ---------- */
   .aac-panel {
-    display: none; position: fixed; z-index: 99992;
-    width: 360px; max-width: calc(100vw - 32px); height: 520px;
+    display: none;
+    position: fixed;
+    top: auto; left: auto; bottom: 108px; right: 24px;   /* safe default */
+    z-index: 99992;
+    width: 360px;
+    max-width: calc(100vw - 32px);
+    height: 520px;
     max-height: calc(100vh - 32px);
-    background: var(--aac-surface); color: var(--aac-text);
-    color-scheme: var(--aac-scheme);
+    margin: 0;
+    box-sizing: border-box;
+    background: var(--aac-surface);
+    color: var(--aac-text);
     border: 1px solid var(--aac-border);
-    border-radius: 14px; overflow: hidden;
+    border-radius: 14px;
+    overflow: hidden;
     box-shadow: 0 12px 40px var(--aac-shadow);
-    flex-direction: column; font: 14px/1.45 system-ui, sans-serif;
-  }
-  .aac-panel.aac-right { bottom: 108px; right: 24px; }
-  .aac-panel.aac-left  { bottom: 108px; left: 24px; }
-  .aac-panel.aac-popup {
-    top: 50%; left: 50%; transform: translate(-50%, -50%);
-    width: 480px; height: 580px;
+    flex-direction: column;
+    font: 14px/1.45 system-ui, sans-serif;
   }
   .aac-panel.aac-open { display: flex; }
-  .aac-backdrop.aac-open { display: block; }
+
+  /* Drawer Modes: Full height, slide-in animations */
+  .aac-panel.aac-right, .aac-panel.aac-left, .aac-panel.aac-drawer {
+    top: 0; bottom: 0; height: 100vh; height: 100dvh;
+    max-height: none;
+    width: min(400px, 100vw);
+    max-width: 100vw;
+    border-radius: 0;
+    border-top: none; border-bottom: none;
+    transition: transform 220ms ease, visibility 0s linear 220ms;
+    visibility: hidden;
+  }
+
+  .aac-panel.aac-right, .aac-panel.aac-drawer {
+    right: 0; left: auto;
+    border-left: 1px solid var(--aac-border);
+    border-right: none;
+    transform: translateX(100%);
+  }
+
+  .aac-panel.aac-left {
+    left: 0; right: auto;
+    border-right: 1px solid var(--aac-border);
+    border-left: none;
+    transform: translateX(-100%);
+  }
+
+  .aac-panel.aac-right.aac-open, .aac-panel.aac-left.aac-open, .aac-panel.aac-drawer.aac-open {
+    transform: translateX(0);
+    visibility: visible;
+    transition: transform 220ms ease;
+  }
+
+  /* popup: centered with margin:auto (no transform => can't drift off-screen) */
+  .aac-panel.aac-popup {
+    top: 0; right: 0; bottom: 0; left: 0;
+    margin: auto;
+    width: 480px; height: 580px;
+    border-radius: 14px;
+  }
+
+  /* ---------- panel internals ---------- */
   .aac-head {
     background: var(--aac-accent); color: #fff; padding: 12px 16px;
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
   }
   .aac-head .aac-avatar { width: 26px; height: 26px; line-height: 0; }
-  .aac-head .aac-avatar svg, .aac-head .aac-avatar img {
-    width: 100%; height: 100%; border-radius: 50%;
-  }
+  .aac-head .aac-avatar svg, .aac-head .aac-avatar img { width: 100%; height: 100%; border-radius: 50%; }
   .aac-head .aac-title { font-weight: 600; flex: 1; }
-  .aac-close { background: none; border: none; color: #fff;
-               font-size: 20px; cursor: pointer; }
-  .aac-help { color: #fff; opacity: .85; text-decoration: none;
-              font-size: 13px; font-weight: 600; margin-right: 8px;
-              border: 1px solid rgba(255,255,255,.6); border-radius: 10px;
-              padding: 1px 8px; }
+  .aac-close { background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; }
+  .aac-help { color: #fff; opacity: .85; text-decoration: none; font-size: 13px; font-weight: 600;
+              margin-right: 8px; border: 1px solid rgba(255,255,255,.6); border-radius: 10px; padding: 1px 8px; }
   .aac-help:hover { opacity: 1; }
-  .aac-log { flex: 1; overflow-y: auto; padding: 14px;
-             background: var(--aac-log-bg); display: flex;
-             flex-direction: column; gap: 10px; }
-  .aac-msg { max-width: 85%; padding: 9px 12px; border-radius: 12px;
-             white-space: pre-wrap; word-break: break-word; }
-  .aac-msg.aac-user { align-self: flex-end; background: var(--aac-accent);
-                      color: #fff; border-bottom-right-radius: 4px; }
-  .aac-msg.aac-bot { align-self: flex-start; background: var(--aac-surface);
-                     color: var(--aac-text);
-                     border: 1px solid var(--aac-border);
-                     border-bottom-left-radius: 4px; }
-  .aac-card { align-self: stretch; background: var(--aac-surface);
-              color: var(--aac-text);
-              border: 1px solid var(--aac-border);
-              border-left: 3px solid var(--aac-accent); border-radius: 8px;
-              padding: 8px 10px; font-size: 12.5px; }
+  .aac-log { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px;
+             background: var(--aac-log-bg); display: flex; flex-direction: column; gap: 10px; }
+  .aac-msg { max-width: 85%; padding: 9px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; }
+  .aac-msg.aac-user { align-self: flex-end; background: var(--aac-accent); color: #fff; border-bottom-right-radius: 4px; }
+  .aac-msg.aac-bot { align-self: flex-start; background: var(--aac-surface); color: var(--aac-text);
+                     border: 1px solid var(--aac-border); border-bottom-left-radius: 4px; }
+  .aac-card { align-self: stretch; background: var(--aac-surface); color: var(--aac-text);
+              border: 1px solid var(--aac-border); border-left: 3px solid var(--aac-accent);
+              border-radius: 8px; padding: 8px 10px; font-size: 12.5px; }
   .aac-card b { color: var(--aac-accent); }
   .aac-card table { border-collapse: collapse; margin-top: 4px; width: 100%; }
   .aac-card td { padding: 1px 6px 1px 0; vertical-align: top; }
   .aac-card td:first-child { color: var(--aac-muted); white-space: nowrap; }
-  .aac-form { display: flex; border-top: 1px solid var(--aac-border);
-              background: var(--aac-surface); }
-  .aac-output { flex: 0 0 auto; max-width: 6.5rem; border: none;
-                border-right: 1px solid var(--aac-border);
-                background: var(--aac-log-bg); color: var(--aac-text);
-                padding: 0 6px; font: inherit; font-size: 13px;
-                outline: none; cursor: pointer; }
-  .aac-input { flex: 1; border: none; padding: 12px 14px; font: inherit;
-               outline: none; background: var(--aac-surface);
-               color: var(--aac-text); }
+  .aac-form { display: flex; flex: 0 0 auto; border-top: 1px solid var(--aac-border);
+              background: var(--aac-surface); width: 100%; box-sizing: border-box; }
+  .aac-output { flex: 0 0 auto; max-width: 6.5rem; border: none; border-right: 1px solid var(--aac-border);
+                background: var(--aac-log-bg); color: var(--aac-text); padding: 0 6px;
+                font: inherit; font-size: 13px; outline: none; cursor: pointer; }
+  .aac-input { flex: 1 1 auto; min-width: 0; border: none; padding: 12px 14px; font: inherit;
+               outline: none; background: var(--aac-surface); color: var(--aac-text); }
   .aac-input::placeholder { color: var(--aac-muted); }
-  .aac-send { border: none; background: var(--aac-accent); color: #fff;
-              padding: 0 18px; font: inherit; cursor: pointer; }
+  .aac-send { border: none; background: var(--aac-accent); color: #fff; padding: 0 18px; font: inherit; cursor: pointer; }
   .aac-typing { font-style: italic; color: var(--aac-muted); }
-  .aac-sources { align-self: stretch; font-size: 11.5px;
-                 color: var(--aac-muted); margin-top: -4px;
-                 padding: 0 4px; }
-  .aac-sources summary { cursor: pointer; color: var(--aac-accent);
-                         font-weight: 600; outline: none; }
+  .aac-sources { align-self: stretch; font-size: 11.5px; color: var(--aac-muted); margin-top: -4px; padding: 0 4px; }
+  .aac-sources summary { cursor: pointer; color: var(--aac-accent); font-weight: 600; outline: none; }
   .aac-sources ul { margin: 4px 0 2px 18px; padding: 0; }
   .aac-sources li { margin: 2px 0; }
   .aac-sources .aac-model { margin-top: 4px; font-style: italic; }
 </style>
 
-{# ---------- launcher: Little Larry SVG (default) / image / emoji ---------- #}
+{# ---------- launcher ---------- #}
 <button type="button" id="aac-launcher"
         class="aac-launcher {% if inline %}aac-inline{% else %}aac-floating{% endif %}{% if bot.avatar_image_url or bot.avatar_emoji %} aac-emoji{% endif %}"
         aria-label="Open {{ bot.name }} chat" title="{{ bot.name }}">
@@ -153,51 +178,39 @@
   {% elif bot.avatar_emoji %}
     {{ bot.avatar_emoji }}
   {% else %}
-    <svg class="aac-robot" viewBox="2 2 80 90"
-         preserveAspectRatio="xMidYMid meet"
-         xmlns="http://www.w3.org/2000/svg" role="img"
-         aria-label="{{ bot.name }} robot icon">
-      <!-- Antenna -->
-      <line x1="50" y1="30" x2="50" y2="20" stroke="#4A90E2" stroke-width="4"
-            stroke-linecap="round" />
+    <svg class="aac-robot" viewBox="2 2 80 90" preserveAspectRatio="xMidYMid meet"
+         xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{{ bot.name }} robot icon">
+      <line x1="50" y1="30" x2="50" y2="20" stroke="#4A90E2" stroke-width="4" stroke-linecap="round" />
       <circle cx="50" cy="18" r="4" class="aac-antenna-light" />
-      <!-- Head/Body -->
       <rect x="20" y="30" width="60" height="45" rx="12" fill="#4A90E2" />
-      <!-- Left Eye (static) -->
       <circle cx="38" cy="50" r="5" fill="white" />
-      <!-- Right Eye (winks) -->
       <g class="aac-wink-group">
         <circle cx="62" cy="50" r="5" fill="white" />
-        <rect class="aac-eyelid" x="57" y="34" width="10" height="12"
-              fill="#4A90E2" />
+        <rect class="aac-eyelid" x="57" y="34" width="10" height="12" fill="#4A90E2" />
       </g>
-      <!-- Smirk mouth -->
-      <path d="M 40 62 Q 50 68 60 62" stroke="white" stroke-width="3"
-            fill="none" stroke-linecap="round" />
+      <path d="M 40 62 Q 50 68 60 62" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" />
     </svg>
   {% endif %}
 </button>
 
+{# ---------- overlay: backdrop + panel (moved to <body> by JS) ---------- #}
+<div id="aac-overlay" data-aac-mode="{{ bot.theme_mode|default:'auto' }}">
 <div class="aac-backdrop" id="aac-backdrop"></div>
-<section class="aac-panel aac-{{ bot.window_mode }}" id="aac-panel"
+<section class="aac-panel aac-{{ bot.window_mode|default:'drawer' }}" id="aac-panel"
          role="dialog" aria-label="{{ bot.name }} chat">
   <header class="aac-head">
     <span class="aac-avatar">{% if bot.avatar_image_url %}<img
         src="{{ bot.avatar_image_url }}" alt="">{% elif bot.avatar_emoji %}{{ bot.avatar_emoji }}{% else %}<svg
-        viewBox="2 2 80 90" xmlns="http://www.w3.org/2000/svg"><line x1="50"
-        y1="30" x2="50" y2="20" stroke="#fff" stroke-width="4"
-        stroke-linecap="round"/><circle cx="50" cy="18" r="4"
-        fill="#FFD700"/><rect x="20" y="30" width="60" height="45" rx="12"
-        fill="#fff" opacity=".9"/><circle cx="38" cy="50" r="5"
-        fill="var(--aac-accent)"/><circle cx="62" cy="50" r="5"
-        fill="var(--aac-accent)"/><path d="M 40 62 Q 50 68 60 62"
-        stroke="var(--aac-accent)" stroke-width="3" fill="none"
-        stroke-linecap="round"/></svg>{% endif %}</span>
+        viewBox="2 2 80 90" xmlns="http://www.w3.org/2000/svg"><line x1="50" y1="30" x2="50" y2="20"
+        stroke="#fff" stroke-width="4" stroke-linecap="round"/><circle cx="50" cy="18" r="4"
+        fill="#FFD700"/><rect x="20" y="30" width="60" height="45" rx="12" fill="#fff" opacity=".9"/><circle
+        cx="38" cy="50" r="5" fill="var(--aac-accent)"/><circle cx="62" cy="50" r="5"
+        fill="var(--aac-accent)"/><path d="M 40 62 Q 50 68 60 62" stroke="var(--aac-accent)"
+        stroke-width="3" fill="none" stroke-linecap="round"/></svg>{% endif %}</span>
     <span class="aac-title">{{ bot.name }}</span>
-    <a class="aac-help" href="{% url 'ai_agent_core:user_guide' %}"
-       target="_blank" rel="noopener" title="How to use {{ bot.name }}">? Guide</a>
-    <button type="button" class="aac-close" id="aac-close"
-            aria-label="Close">&times;</button>
+    <a class="aac-help" href="{% url 'ai_agent_core:user_guide' %}" target="_blank" rel="noopener"
+       title="How to use {{ bot.name }}">? Guide</a>
+    <button type="button" class="aac-close" id="aac-close" aria-label="Close">&times;</button>
   </header>
   <div class="aac-log" id="aac-log"></div>
   <form class="aac-form" id="aac-form">
@@ -209,20 +222,21 @@
       <option value="excel">&#128202; Excel</option>
       <option value="ppt">&#128253; PowerPoint</option>
     </select>
-    <input class="aac-input" id="aac-input" autocomplete="off"
-           placeholder="{{ bot.placeholder_text }}">
+    <input class="aac-input" id="aac-input" autocomplete="off" placeholder="{{ bot.placeholder_text }}">
     <button class="aac-send" type="submit">Send</button>
   </form>
 </section>
+</div>
 </div>
 
 <script>
 (function () {
   "use strict";
   var chatUrl = "{% url 'ai_agent_core:bot_chat' %}";
-  var stepUrlTpl = "{% url 'ai_agent_core:report_step' 0 %}";  /* 0 -> id */
+  var stepUrlTpl = "{% url 'ai_agent_core:report_step' 0 %}";
   var GREETING = "{{ bot.greeting|escapejs }}";
   var root = document.getElementById("aac-root"),
+      overlay = document.getElementById("aac-overlay"),
       panel = document.getElementById("aac-panel"),
       backdrop = document.getElementById("aac-backdrop"),
       log = document.getElementById("aac-log"),
@@ -231,27 +245,25 @@
       launcher = document.getElementById("aac-launcher"),
       output = document.getElementById("aac-output"),
       isPopup = panel.classList.contains("aac-popup"),
+      isDrawer = panel.classList.contains("aac-drawer"),
       conversationId = null, greeted = false;
 
-  /* =====================================================================
-     Theme resolution — hooks into the host page's dark/light mode.
-     Priority: BotProfile force (light/dark) > site theme markers >
-     OS prefers-color-scheme. Live-updates on toggle.
-     Recognised site markers on <html> or <body>:
-       data-theme / data-bs-theme / data-color-scheme / data-mode = dark|light
-       class: dark | dark-mode | theme-dark | (Tailwind's `dark`) and the
-              light equivalents
-     Manual hook for custom theme systems:
-       window.aacSetTheme("dark" | "light" | "auto")
-     ===================================================================== */
+  /* Re-parent the overlay to <body> so position:fixed is ALWAYS relative to
+     the viewport — even when the launcher sits inside a transformed/animated
+     container (navbar, sidebar, card). This is the "half off-screen" fix. */
+  function mountOverlay() {
+    if (overlay.parentNode !== document.body) document.body.appendChild(overlay);
+  }
+  if (document.body) mountOverlay();
+  else document.addEventListener("DOMContentLoaded", mountOverlay);
+
+  /* ----- theme resolution ----- */
   var themeMode = root.getAttribute("data-aac-mode") || "auto";
-  var mq = window.matchMedia
-         ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  var mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
 
   function siteTheme() {
     var els = [document.documentElement, document.body];
-    var attrs = ["data-theme", "data-bs-theme", "data-color-scheme",
-                 "data-mode"];
+    var attrs = ["data-theme", "data-bs-theme", "data-color-scheme", "data-mode"];
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
       if (!el) continue;
@@ -269,33 +281,28 @@
     }
     return null;
   }
-
   function applyTheme() {
     var t = (themeMode === "light" || themeMode === "dark")
           ? themeMode
           : (siteTheme() || (mq && mq.matches ? "dark" : "light"));
     root.setAttribute("data-aac-theme", t);
+    overlay.setAttribute("data-aac-theme", t);
   }
   applyTheme();
-
-  if (mq) {  /* OS-level toggle */
+  if (mq) {
     if (mq.addEventListener) mq.addEventListener("change", applyTheme);
     else if (mq.addListener) mq.addListener(applyTheme);
   }
-  if (window.MutationObserver) {  /* site-level toggle (class/attr flips) */
+  if (window.MutationObserver) {
     var watch = {attributes: true,
-                 attributeFilter: ["class", "data-theme", "data-bs-theme",
-                                   "data-color-scheme", "data-mode"]};
+                 attributeFilter: ["class", "data-theme", "data-bs-theme", "data-color-scheme", "data-mode"]};
     var obs = new MutationObserver(applyTheme);
     obs.observe(document.documentElement, watch);
     if (document.body) obs.observe(document.body, watch);
   }
-  window.aacSetTheme = function (t) {  /* custom theme systems call this */
-    themeMode = t || "auto";
-    applyTheme();
-  };
+  window.aacSetTheme = function (t) { themeMode = t || "auto"; applyTheme(); };
 
-  /* ----- Little Larry random wink (preserved from robot_wink.html) ----- */
+  /* ----- Little Larry random wink ----- */
   (function () {
     var eyelid = launcher.querySelector(".aac-eyelid");
     function triggerWink() {
@@ -308,20 +315,26 @@
 
   /* ----- open / close ----- */
   function open_() {
+    mountOverlay();
     panel.classList.add("aac-open");
-    if (isPopup) backdrop.classList.add("aac-open");
+    if (isPopup || isDrawer) backdrop.classList.add("aac-open");
+    if (isDrawer) launcher.classList.add("aac-hidden");
     if (!greeted) { greeted = true; addMsg("bot", GREETING); }
-    input.focus();
+    setTimeout(function () { input.focus(); }, isDrawer ? 230 : 0);
   }
   function close_() {
     panel.classList.remove("aac-open");
     backdrop.classList.remove("aac-open");
+    launcher.classList.remove("aac-hidden");
   }
   launcher.addEventListener("click", function () {
     panel.classList.contains("aac-open") ? close_() : open_();
   });
   document.getElementById("aac-close").addEventListener("click", close_);
   backdrop.addEventListener("click", close_);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && panel.classList.contains("aac-open")) close_();
+  });
 
   /* ----- messages ----- */
   function addMsg(role, text) {
@@ -340,13 +353,11 @@
     var html = "<summary>&#128269; Sources &amp; audit trail</summary><ul>";
     sources.forEach(function (s) {
       html += "<li><b>" + String(s.table).replace(/</g, "&lt;") + "</b> — " +
-              (s.hit ? s.rows + " record" + (s.rows !== 1 ? "s" : "")
-                     : "searched, no match") + "</li>";
+              (s.hit ? s.rows + " record" + (s.rows !== 1 ? "s" : "") : "searched, no match") + "</li>";
     });
     html += "</ul>";
     var m = data.model || {};
-    var engine = m.model ? ((m.provider ? m.provider + " / " : "") + m.model)
-                         : (m.mode || "");
+    var engine = m.model ? ((m.provider ? m.provider + " / " : "") + m.model) : (m.mode || "");
     html += '<div class="aac-model">Generated by AI' +
             (engine ? " · " + String(engine).replace(/</g, "&lt;") : "") +
             " · every read is policy-checked &amp; logged</div>";
@@ -354,7 +365,6 @@
     log.appendChild(det);
     log.scrollTop = log.scrollHeight;
   }
-
   function addCard(result) {
     var el = document.createElement("div");
     el.className = "aac-card";
@@ -363,8 +373,8 @@
       html += "<table>";
       Object.keys(row).forEach(function (k) {
         html += "<tr><td>" + k + "</td><td>" +
-                String(row[k] === null ? "—" : row[k])
-                  .replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</td></tr>";
+                String(row[k] === null ? "—" : row[k]).replace(/&/g, "&amp;").replace(/</g, "&lt;") +
+                "</td></tr>";
       });
       html += "</table>";
     });
@@ -373,18 +383,14 @@
     log.scrollTop = log.scrollHeight;
   }
 
-  /* ----- chaptered report progress (big reports written bit by bit) ----- */
-  function csrf() {
-    return form.querySelector("[name=csrfmiddlewaretoken]").value;
-  }
+  /* ----- chaptered report progress ----- */
+  function csrf() { return form.querySelector("[name=csrfmiddlewaretoken]").value; }
   function runReportJob(jobId) {
     var progress = addMsg("bot", "Preparing the outline…");
     progress.classList.add("aac-typing");
     function tick() {
       fetch(stepUrlTpl.replace("0", String(jobId)), {
-        method: "POST",
-        headers: {"X-CSRFToken": csrf()},
-        credentials: "same-origin"
+        method: "POST", headers: {"X-CSRFToken": csrf()}, credentials: "same-origin"
       }).then(function (r) { return r.json(); }).then(function (data) {
         progress.textContent = data.note || "Working…";
         if (data.failed) {
@@ -396,25 +402,21 @@
           progress.classList.remove("aac-typing");
           var card = document.createElement("div");
           card.className = "aac-card";
-          var fmts = [["", "Markdown"], ["?format=word", "Word"],
-                      ["?format=pdf", "PDF"], ["?format=excel", "Excel"],
-                      ["?format=ppt", "PowerPoint"]];
+          var fmts = [["", "Markdown"], ["?format=word", "Word"], ["?format=pdf", "PDF"],
+                      ["?format=excel", "Excel"], ["?format=ppt", "PowerPoint"]];
           var links = fmts.map(function (f) {
             return '<a href="' + data.download_url + f[0] + '" download ' +
-                   'style="color:var(--aac-accent);font-weight:600;' +
-                   'margin-right:10px">⬇ ' + f[1] + "</a>";
+                   'style="color:var(--aac-accent);font-weight:600;margin-right:10px">⬇ ' + f[1] + "</a>";
           }).join("");
-          card.innerHTML = "<b>Report ready (" + data.total_chapters +
-                           " chapters)</b><br>" + links;
+          card.innerHTML = "<b>Report ready (" + data.total_chapters + " chapters)</b><br>" + links;
           log.appendChild(card);
           log.scrollTop = log.scrollHeight;
           return;
         }
-        setTimeout(tick, 400);   /* next chapter */
+        setTimeout(tick, 400);
       }).catch(function () {
         progress.classList.remove("aac-typing");
-        addMsg("bot", "Lost connection while writing the report. " +
-                      "Send the request again to resume.");
+        addMsg("bot", "Lost connection while writing the report. Send the request again to resume.");
       });
     }
     tick();
@@ -430,10 +432,7 @@
     typing.classList.add("aac-typing");
     fetch(chatUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRFToken": form.querySelector("[name=csrfmiddlewaretoken]").value
-      },
+      headers: {"Content-Type": "application/json", "X-CSRFToken": csrf()},
       credentials: "same-origin",
       body: JSON.stringify({message: msg, conversation_id: conversationId,
                             output: output ? output.value : "chat"})

@@ -56,6 +56,14 @@ def sync_registry(force: bool = False) -> None:
         qs = (SearchableTable.objects.filter(enabled=True)
               .prefetch_related("fields__groups"))
         for table in qs:
+            print(
+                "REGISTERED TABLE:",
+                table.app_label,
+                table.model_name,
+                "FIELDS:",
+                list(table.fields.values_list("field_name", flat=True)),
+            )
+        for table in qs:
             names: List[str] = []
             for f in table.fields.all():
                 if f.field_name.lower() in legacy.DENIED_FIELDS:
@@ -79,6 +87,7 @@ def sync_registry(force: bool = False) -> None:
         FIELD_GROUPS = field_groups
         _last_sync = time.time()
         _dirty = False
+        print(FIELD_GROUPS)
 
 
 def visible_fields(user, app_label: str, model_name: str,

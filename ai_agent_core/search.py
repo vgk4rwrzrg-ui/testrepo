@@ -13,6 +13,7 @@ apply). To plug in a real LLM, point ``AI_AGENT_LLM_HANDLER`` at a callable:
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
@@ -40,6 +41,17 @@ _TEXT_INTERNAL_TYPES = {
     # django-clickhouse-backend string types
     "StringField", "FixedStringField",
 }
+
+
+def _row_key(row: dict) -> str:
+    """Produce a deterministic, hashable string representation of a row.
+    Handles unhashable types like dicts and lists by JSON encoding them.
+    """
+    normalized = {
+        k: json.dumps(v, sort_keys=True) if isinstance(v, (list, dict)) else v
+        for k, v in row.items()
+    }
+    return json.dumps(normalized, sort_keys=True)
 
 
 def _terms(message: str) -> List[str]:
@@ -130,7 +142,7 @@ def run_search(user, message: str,
                     limit=ROWS_PER_TABLE)
                 if r["ok"]:
                     for row in r["data"]["rows"]:
-                        key = tuple(sorted(row.items()))
+                        key = _row_key(row)
                         if key not in seen_pks:
                             seen_pks.add(key)
                             table_rows.append(row)

@@ -48,58 +48,6 @@ DEFAULT_LIMIT = 50
 # Explicit allowlist of app -> model -> fields the agent may read.
 # NOTE: 'id' is NOT implied; each model lists its real primary key explicitly.
 ALLOWED_MODELS: Dict[str, Dict[str, List[str]]] = {
-    "FiledEngSite": {
-        "Mission_Area": ["id", "Name", "Country", "State", "City", "Address",
-                         "Zip_Code", "latitude", "longitude"],
-        "Customer": ["id", "Customer", "Mission_Area"],
-        "Cus_Contact": ["id", "Customer", "Type", "Contact_info"],
-        "Job_data": ["id", "Job_Title", "Job_Code", "Job_Level"],
-        "Program_Name_Data": ["id", "Program_Name", "Program_Abr", "DocumentID",
-                              "Status", "SBU", "Prod_area", "Dep", "IAS",
-                              "Program_PM", "Program_CE", "Finance", "IWA_Manage",
-                              "Program_customer", "Program_Information",
-                              "Program_Comment", "Members"],
-        "User_data": ["emp", "First_Name", "Middel_Name", "Last_Name", "Email",
-                      "Phone", "cost_center", "Current_Req", "Manager_type",
-                      "Employment_Status", "Employment_Type", "transfer_type",
-                      "Team", "Start_date", "Deployed", "emp_status", "Prog_Country", 
-                      "Prog_City", "Prog_State", "Department", "Section_Manager", 'Dept_Manager', 
-                      'Site_Manager', 'Director'],
-        "admin_user": ['admin', 'Assist'],
-
-        "Input_field": ["id", "Name", "Type", "help_text"],
-        "OutBreif": ["emp", "Program", "Department", "Section_Manager", "Dept_Manager",
-                     "Site_Manager", "Director", "reason"],
-        "Property_plan": ["progam", "Propert_Type", "Propert_Purpose", "Asset_Mgmt"],
-        "work_information": ["progam", "Work_location", "Work_duty", "Work_Sked"],
-        "Communication_Plan": ["progam", "Name", "Perdicity", "Notication", "comment", "Link"],
-        "Contracts": ["progam", "Contract", "Start", "Active", "warning", "comment", "type", "End"],
-        "Progam_Data_History": ["user_data", "Type_Changed", "Program", "Field", "date_changed"]
-
-    },
-    "Incident": {
-        "Incident_report": ["Incident_number", "sss_date", "Severity",
-                            "Description", "Status"],
-        "Incident_Process": ["id", "Incident", "Type", "order"],
-        "Alternate_Processes": ["id", "Incident", "Tracking"],
-        "Invloved": ["id", "Incident", "Tag"],
-    },
-    "Req_tracker": {
-        "locations": ["code", "State", "City", "Country"],
-        "Requistion": ["Reqid", "Status", "date_closed", "Job_Title", "Job_Code", "Post_Date", "program", "Hiring_Manager_ID", 
-                        "Requistion_Type", "Recruiters"],
-        "Candidate": ["candiate_key", "Stage", "Gate", "date_closed", "Requistion", "First_Name", "Last_Name", "Notes"
-                      "First_Name", "Last_Name"],
-        "Requistion_Notes": [
-            "id", "Requistion", "Date_stamp", "Note", "signed_by"
-        ],
-        "Candidate_Notes": [
-            "id", "Requistion", "Date_stamp", "Note", "signed_by"
-        ],
-        "Gate_History": [
-            "id", "Candidate", "Gate", "Start_Date"
-        ],
-    },
     "user_analytics": {
         "PageView": ["user", "visitor_id", "path", "status_code", "response_time_ms", 'referrer', 'user_agent'],
         "AnalyticsEvent": ["user", "visitor_id", "path", "event_type", "duration_seconds", 'metadata'],
@@ -110,7 +58,7 @@ ALLOWED_MODELS: Dict[str, Dict[str, List[str]]] = {
         "Group": ["id", "name"],
     },
 }
-
+ 
 # Field names that must never be exposed, even via FK traversal.
 DENIED_FIELDS = {"password", "token", "secret", "api_key", "ssn"}
 
@@ -223,6 +171,12 @@ def resolve_model_path(model_path: str) -> tuple:
 
     Returns (app_label, model_name) or raises ValueError.
     """
+    try:
+        from .. import registry
+        registry.sync_registry()
+    except Exception:
+        pass
+
     if not isinstance(model_path, str) or model_path.count(".") != 1:
         raise ValueError(
             f"Invalid model path {model_path!r}. Expected 'app_label.ModelName'."
