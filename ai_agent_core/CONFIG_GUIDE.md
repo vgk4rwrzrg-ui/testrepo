@@ -228,18 +228,30 @@ cross databases — between a ClickHouse table and a default-DB table use the
 `scalars` mechanism (each scalar is its own audited single-DB aggregate, then a
 constant in the formula).
 
-### Known sharp edges (small fixes, not yet applied)
+### Former sharp edges — now fixed in-app (`ClickHouseCompatTests`)
 
-1. If you use `chm.StringField` instead of `models.CharField`, `search.py`'s
-   `isinstance(CharField/TextField)` check skips those columns for free-text
-   search — fetch/aggregate/compute still work. Fix is a one-liner
-   (`get_internal_type()`).
-2. Exotic column types (Array/Map/Tuple/IPv4) may need a `default=str` JSON
-   fallback in the wrappers.
-3. Verify Django's `NullIf` (divide-by-zero guard in `compute_data`) renders
-   acceptably on your ClickHouse version.
-4. Tests touching ClickHouse models need `TransactionTestCase` (no
-   transactions in ClickHouse).
+1. **String-field detection — FIXED.** `search.py` now matches text columns by
+   `get_internal_type()` (includes `StringField` / `FixedStringField`), so
+   `chm.StringField` columns are visible to free-text search. Using
+   `models.CharField` is no longer required (though still fine).
+2. **Exotic column types — FIXED.** JSON serialization falls back to `str()`
+   for unknown types (Array/Map/Tuple/IPv4/IPv6, memoryview, ...) instead of
+   raising `INTERNAL_ERROR`.
+3. **Division guard — VERIFIED + hardened.** `compute_data`'s divide-by-zero
+   guard compiles to standard `NULLIF(x, y)` (asserted by a test), which
+   ClickHouse accepts as a case-insensitive alias of `nullIf`. Additionally,
+   any `inf`/`nan` that ClickHouse float math produces is scrubbed to `null`
+   in every tool response, keeping output strict JSON.
+4. **Your own tests** touching ClickHouse models still need
+   `TransactionTestCase` (ClickHouse has no transactions) — that one is
+   inherent to the backend, not fixable app-side:
+
+   ```python
+   from django.test import TransactionTestCase
+
+   class MetricsTests(TransactionTestCase):
+       databases = {"default", "clickhouse"}
+   ```
 
 ---
 

@@ -27,6 +27,7 @@ All public tools return a uniform envelope:
 from __future__ import annotations
 
 import json
+import math
 import logging
 from typing import Any, Dict, List, Optional
 from django.core.exceptions import FieldError
@@ -163,10 +164,36 @@ def _err(code: str, message: str, hint: str = "") -> Dict[str, Any]:
             "error": {"code": code, "message": message, "hint": hint}}
 
 
+class _FallbackJSONEncoder(DjangoJSONEncoder):
+    """DjangoJSONEncoder plus a ``str()`` fallback so exotic backend column
+    types (ClickHouse Array/Map/Tuple/IPv4/IPv6, memoryview, ...) serialize
+    instead of raising INTERNAL_ERROR."""
+
+    def default(self, o):  # noqa: D102
+        try:
+            return super().default(o)
+        except TypeError:
+            return str(o)
+
+
+def _scrub_nonfinite(data: Any) -> Any:
+    """Replace inf/-inf/nan with None. ClickHouse float math returns these
+    instead of erroring, and they are not valid strict JSON."""
+    if isinstance(data, float):
+        return data if math.isfinite(data) else None
+    if isinstance(data, list):
+        return [_scrub_nonfinite(v) for v in data]
+    if isinstance(data, dict):
+        return {k: _scrub_nonfinite(v) for k, v in data.items()}
+    return data
+
+
 def _json_safe(data: Any) -> Any:
     """Round-trip through DjangoJSONEncoder so dates/decimals/UUIDs are
-    plain JSON types the agent can consume directly."""
-    return json.loads(json.dumps(data, cls=DjangoJSONEncoder))
+    plain JSON types the agent can consume directly. Unknown types fall
+    back to ``str()``; non-finite floats become null."""
+    return _scrub_nonfinite(
+        json.loads(json.dumps(data, cls=_FallbackJSONEncoder)))
 
 
 # ---------------------------------------------------------------------------

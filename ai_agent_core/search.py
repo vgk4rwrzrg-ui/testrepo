@@ -35,6 +35,13 @@ STOPWORDS = {"the", "a", "an", "of", "in", "on", "for", "to", "is", "are",
              "all", "with", "and", "or", "how", "many", "does", "do"}
 
 
+_TEXT_INTERNAL_TYPES = {
+    "CharField", "TextField", "EmailField", "SlugField", "URLField",
+    # django-clickhouse-backend string types
+    "StringField", "FixedStringField",
+}
+
+
 def _terms(message: str) -> List[str]:
     words = re.findall(r"[\w@.-]{2,}", message.lower())
     return [w for w in words if w not in STOPWORDS][:6]
@@ -52,8 +59,15 @@ def _text_fields(app_label: str, model_name: str,
             f = model._meta.get_field(name)
         except Exception:
             continue
-        if isinstance(f, (dj_models.CharField, dj_models.TextField,
-                          dj_models.EmailField, dj_models.SlugField)):
+        # By internal type rather than isinstance so non-core backends'
+        # text fields register too (e.g. django-clickhouse-backend's
+        # StringField / FixedStringField report their own internal types).
+        try:
+            internal = f.get_internal_type()
+        except Exception:
+            internal = ""
+        if internal in _TEXT_INTERNAL_TYPES or isinstance(
+                f, (dj_models.CharField, dj_models.TextField)):
             out.append(name)
     return out
 

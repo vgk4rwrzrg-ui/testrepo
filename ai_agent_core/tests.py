@@ -911,3 +911,79 @@ class UserGuideLinkTests(TestCase):
         self.assertContains(r, "Sources &amp; audit trail")  # from USER_GUIDE.md
         self.assertContains(r, "PowerPoint")
         self.assertContains(r, "<h2")                        # rendered, not raw
+
+
+class ClickHouseCompatTests(TestCase):
+    """The four django-clickhouse-backend sharp edges (CONFIG_GUIDE #7)."""
+
+    # 1. Text-field detection by internal type, not isinstance ------------
+    def test_search_detects_backend_string_fields_by_internal_type(self):
+        from unittest import mock
+        from . import search
+
+        class FakeStringField:            # mimics clickhouse_backend fields
+            def get_internal_type(self):
+                return "StringField"
+
+        class FakeMeta:
+            @staticmethod
+            def get_field(name):
+                return FakeStringField()
+
+        class FakeModel:
+            _meta = FakeMeta()
+
+        with mock.patch("django.apps.apps.get_model", return_value=FakeModel):
+            out = search._text_fields("fake", "Model", ["name", "city"])
+        self.assertEqual(out, ["name", "city"])
+
+    def test_search_still_detects_core_char_fields(self):
+        from .search import _text_fields
+        out = _text_fields("auth", "User", ["username", "email", "is_active"])
+        self.assertIn("username", out)
+        self.assertIn("email", out)
+        self.assertNotIn("is_active", out)   # boolean stays excluded
+
+    # 2. Exotic column types fall back to str() ---------------------------
+    def test_json_safe_serializes_exotic_types(self):
+        import ipaddress
+        from .legacy.ai_tools import _json_safe
+        data = {"ip": ipaddress.IPv4Address("10.0.0.1"),
+                "buf": memoryview(b"xy"),
+                "tup": (1, 2)}
+        out = _json_safe(data)
+        self.assertEqual(out["ip"], "10.0.0.1")     # str() fallback
+        self.assertEqual(out["tup"], [1, 2])        # tuples -> lists
+        self.assertIsInstance(out["buf"], str)      # no TypeError raised
+
+    # 2b. Non-finite floats (ClickHouse float math) become null -----------
+    def test_json_safe_scrubs_inf_and_nan(self):
+        from .legacy.ai_tools import _json_safe
+        out = _json_safe({"a": float("inf"), "b": float("nan"),
+                          "rows": [{"r": float("-inf"), "ok": 1.5}]})
+        self.assertIsNone(out["a"])
+        self.assertIsNone(out["b"])
+        self.assertIsNone(out["rows"][0]["r"])
+        self.assertEqual(out["rows"][0]["ok"], 1.5)
+
+    # 3. Division guard renders as portable NULLIF ------------------------
+    def test_compute_division_compiles_to_nullif(self):
+        import ast as pyast
+        from django.db.models import F  # noqa: F401
+        from .compute import _compile
+        tree = pyast.parse("a / b", mode="eval")
+        expr = _compile(tree, {"a": "id", "b": "id"}, {})
+        qs = User.objects.annotate(_r=expr).values("_r")
+        sql = str(qs.query).upper()
+        self.assertIn("NULLIF", sql)   # ClickHouse-accepted spelling
+
+    def test_compute_divide_by_zero_still_null_end_to_end(self):
+        from .compute import guarded_compute_data
+        u = User.objects.create_user("chz", password="x")
+        TableAccessPolicy.objects.create(
+            app_label="auth", model_name="User", access_level="read",
+            allowed_fields=FIELDS, applies_to_all_authenticated=True)
+        res = guarded_compute_data(
+            u, "auth.User", "id / (id - id)", limit=1)
+        self.assertTrue(res["ok"])
+        self.assertIsNone(res["data"]["rows"][0]["result"])

@@ -211,7 +211,11 @@ def _compile(tree: ast.AST, lookups: Dict[str, str],
                 expr = left - right
             elif isinstance(node.op, ast.Mult):
                 expr = left * right
-            else:  # Div: NULL on zero denominator instead of an error
+            else:  # Div: NULL on zero denominator instead of an error.
+                # Renders as standard NULLIF(x, y), which ClickHouse accepts
+                # (case-insensitive alias of nullIf) -- verified by the
+                # ClickHouseCompatTests SQL assertion. Any residual inf/nan
+                # from float math is scrubbed to null in _json_safe.
                 expr = left / NullIf(right, Value(0.0, output_field=flt),
                                      output_field=flt)
             return ExpressionWrapper(expr, output_field=flt)
