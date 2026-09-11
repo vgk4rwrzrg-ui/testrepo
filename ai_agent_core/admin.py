@@ -3,7 +3,9 @@ from django import forms
 from django.contrib import admin, messages
 
 from .legacy.ai_tools import ALLOWED_MODELS
-from .models import TableAccessAudit, TableAccessPolicy
+from .models import (BotChatMessage, BotConversation, BotProfile,
+                     SearchableField, SearchableTable, TableAccessAudit,
+                     TableAccessPolicy)
 
 
 class TableAccessPolicyForm(forms.ModelForm):
@@ -92,3 +94,93 @@ class TableAccessAuditAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         # Retention cleanup is a management concern, not a UI button.
         return request.user.is_superuser
+
+
+# ---------------------------------------------------------------------------
+# Bot identity & chat window
+# ---------------------------------------------------------------------------
+
+@admin.register(BotProfile)
+class BotProfileAdmin(admin.ModelAdmin):
+    list_display = ("name", "window_mode", "primary_color", "is_active",
+                    "is_default", "updated_at")
+    list_filter = ("window_mode", "is_active", "is_default")
+    search_fields = ("name",)
+    radio_fields = {"window_mode": admin.HORIZONTAL}
+    fieldsets = (
+        ("Identity", {"fields": ("name", "avatar_emoji", "avatar_image_url",
+                                  "greeting", "personality", "system_prompt")}),
+        ("Chat window", {"fields": ("window_mode", "primary_color",
+                                    "placeholder_text", "show_result_cards")}),
+        ("Status", {"fields": ("is_active", "is_default")}),
+    )
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        if obj.is_default:  # keep exactly one default
+            BotProfile.objects.exclude(pk=obj.pk).update(is_default=False)
+
+
+# ---------------------------------------------------------------------------
+# Dynamic table / field registration
+# ---------------------------------------------------------------------------
+
+class SearchableFieldInline(admin.TabularInline):
+    model = SearchableField
+    extra = 1
+    filter_horizontal = ("groups",)
+
+
+@admin.register(SearchableTable)
+class SearchableTableAdmin(admin.ModelAdmin):
+    list_display = ("__str__", "description", "enabled", "field_count")
+    list_filter = ("enabled", "app_label")
+    search_fields = ("app_label", "model_name", "description")
+    inlines = [SearchableFieldInline]
+    actions = ("enable_tables", "disable_tables")
+
+    @admin.display(description="fields")
+    def field_count(self, obj):
+        return obj.fields.count()
+
+    @admin.action(description="Enable selected tables")
+    def enable_tables(self, request, queryset):
+        queryset.update(enabled=True)
+        from .registry import mark_dirty
+        mark_dirty()
+
+    @admin.action(description="Disable selected tables")
+    def disable_tables(self, request, queryset):
+        queryset.update(enabled=False)
+        from .registry import mark_dirty
+        mark_dirty()
+
+
+# ---------------------------------------------------------------------------
+# Conversation history (read-only)
+# ---------------------------------------------------------------------------
+
+class BotChatMessageInline(admin.TabularInline):
+    model = BotChatMessage
+    extra = 0
+    readonly_fields = ("role", "content", "results", "created_at")
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BotConversation)
+class BotConversationAdmin(admin.ModelAdmin):
+    list_display = ("__str__", "bot_name", "started_at", "message_count")
+    list_filter = ("started_at",)
+    search_fields = ("user__username", "session_key")
+    inlines = [BotChatMessageInline]
+    readonly_fields = ("user", "session_key", "bot_name", "started_at")
+
+    @admin.display(description="messages")
+    def message_count(self, obj):
+        return obj.messages.count()
+
+    def has_add_permission(self, request):
+        return False

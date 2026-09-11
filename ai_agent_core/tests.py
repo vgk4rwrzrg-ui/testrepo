@@ -112,3 +112,127 @@ class MiddlewareTests(TestCase):
             "/", HTTP_X_FORWARDED_FOR="1.2.3.4, 203.0.113.7, 10.0.0.5")
         req = self._mw()(req)
         self.assertEqual(req.META["AI_AGENT_CLIENT_IP"], "203.0.113.7")
+
+
+class DynamicRegistrationTests(TestCase):
+    """Admin-registered tables + per-group field visibility."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.hr = Group.objects.create(name="HR")
+        cls.alice = User.objects.create_user("alice")
+        cls.alice.groups.add(cls.hr)
+        cls.bob = User.objects.create_user("bob")
+        # Register a model that is NOT in the legacy allowlist.
+        from .models import BotProfile, SearchableField, SearchableTable
+        BotProfile.objects.create(name="Larry", greeting="Hello!",
+                                  is_default=True)
+        t = SearchableTable.objects.create(app_label="ai_agent_core",
+                                           model_name="BotProfile")
+        SearchableField.objects.create(table=t, field_name="id")
+        SearchableField.objects.create(table=t, field_name="name")
+        hidden = SearchableField.objects.create(table=t,
+                                                field_name="greeting")
+        hidden.groups.add(cls.hr)  # greeting only visible to HR
+        from . import registry
+        registry.mark_dirty()
+        # Open the registered table to everyone via policy.
+        registry.sync_registry(force=True)
+        TableAccessPolicy.objects.create(
+            app_label="ai_agent_core", model_name="BotProfile",
+            access_level="read", applies_to_all_authenticated=True)
+
+    def test_registered_table_is_searchable(self):
+        r = guarded_fetch_data(self.alice, "ai_agent_core.BotProfile")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["data"]["rows"][0]["name"], "Larry")
+
+    def test_group_restricted_field_visible_to_member(self):
+        r = guarded_fetch_data(self.alice, "ai_agent_core.BotProfile")
+        self.assertIn("greeting", r["data"]["rows"][0])
+
+    def test_group_restricted_field_hidden_from_non_member(self):
+        r = guarded_fetch_data(self.bob, "ai_agent_core.BotProfile")
+        self.assertTrue(r["ok"], r)
+        self.assertNotIn("greeting", r["data"]["rows"][0])
+        self.assertIn("name", r["data"]["rows"][0])
+
+    def test_non_member_cannot_filter_on_restricted_field(self):
+        r = guarded_fetch_data(self.bob, "ai_agent_core.BotProfile",
+                               filters={"greeting__icontains": "Hello"})
+        self.assertFalse(r["ok"])
+
+    def test_denied_field_names_cannot_be_registered(self):
+        from .models import SearchableField, SearchableTable
+        t = SearchableTable.objects.get()
+        with self.assertRaises(ValidationError):
+            SearchableField(table=t, field_name="password").full_clean(
+                exclude=["groups"])
+
+    def test_disabling_table_removes_access(self):
+        from . import registry
+        from .models import SearchableTable
+        SearchableTable.objects.update(enabled=False)
+        registry.mark_dirty()
+        r = guarded_fetch_data(self.alice, "ai_agent_core.BotProfile")
+        self.assertFalse(r["ok"])
+        SearchableTable.objects.update(enabled=True)
+        registry.mark_dirty()
+
+
+class BotChatTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from .models import BotProfile, SearchableField, SearchableTable
+        cls.bot = BotProfile.objects.create(
+            name="Larry", greeting="Hello!", window_mode="popup",
+            is_default=True)
+        cls.hr = Group.objects.create(name="HR")
+        cls.alice = User.objects.create_user("alice", password="pw")
+        cls.alice.groups.add(cls.hr)
+        t = SearchableTable.objects.create(app_label="ai_agent_core",
+                                           model_name="BotProfile")
+        for f in ("id", "name", "greeting"):
+            SearchableField.objects.create(table=t, field_name=f)
+        from . import registry
+        registry.mark_dirty()
+        registry.sync_registry(force=True)
+        p = TableAccessPolicy.objects.create(
+            app_label="ai_agent_core", model_name="BotProfile",
+            access_level="read")
+        p.groups.add(cls.hr)
+
+    def test_chat_endpoint_returns_reply_and_results(self):
+        self.client.login(username="alice", password="pw")
+        r = self.client.post("/chat/", {"message": "find Larry"},
+                             content_type="application/json")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn("Larry", str(data["results"]))
+        self.assertTrue(data["reply"])
+        self.assertIsInstance(data["conversation_id"], int)
+
+    def test_chat_persists_conversation(self):
+        from .models import BotChatMessage
+        self.client.login(username="alice", password="pw")
+        r1 = self.client.post("/chat/", {"message": "hello Larry"},
+                              content_type="application/json").json()
+        r2 = self.client.post(
+            "/chat/", {"message": "more", "conversation_id":
+                       r1["conversation_id"]},
+            content_type="application/json").json()
+        self.assertEqual(r1["conversation_id"], r2["conversation_id"])
+        self.assertEqual(BotChatMessage.objects.filter(
+            conversation_id=r1["conversation_id"]).count(), 4)
+
+    def test_anonymous_chat_gets_graceful_no_access_reply(self):
+        r = self.client.post("/chat/", {"message": "find Larry"},
+                             content_type="application/json")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["results"], [])
+
+    def test_widget_demo_page_renders_launcher(self):
+        r = self.client.get("/widget-demo/")
+        self.assertContains(r, "aac-launcher")
+        self.assertContains(r, "aac-popup")   # window_mode from BotProfile
+        self.assertContains(r, "Larry")

@@ -1,0 +1,182 @@
+{% if bot %}
+{# ======= AI Agent Core floating bot widget (self-contained) ======= #}
+<style>
+  :root { --aac-accent: {{ bot.primary_color|default:"#2563eb" }}; }
+  .aac-launcher {
+    position: fixed; bottom: 24px; z-index: 99990;
+    {% if bot.window_mode == "left" %}left: 24px;{% else %}right: 24px;{% endif %}
+    width: 60px; height: 60px; border-radius: 50%;
+    background: var(--aac-accent); color: #fff; border: none;
+    font-size: 28px; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.25);
+    display: flex; align-items: center; justify-content: center;
+    transition: transform .15s ease;
+  }
+  .aac-launcher:hover { transform: scale(1.08); }
+  .aac-launcher img { width: 60%; height: 60%; border-radius: 50%; }
+  .aac-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 99991;
+    background: rgba(0,0,0,.35);
+  }
+  .aac-panel {
+    display: none; position: fixed; z-index: 99992;
+    width: 360px; max-width: calc(100vw - 32px); height: 520px;
+    max-height: calc(100vh - 32px);
+    background: #fff; border-radius: 14px; overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0,0,0,.3);
+    flex-direction: column; font: 14px/1.45 system-ui, sans-serif;
+  }
+  .aac-panel.aac-right { bottom: 96px; right: 24px; }
+  .aac-panel.aac-left  { bottom: 96px; left: 24px; }
+  .aac-panel.aac-popup {
+    top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 480px; height: 580px;
+  }
+  .aac-panel.aac-open { display: flex; }
+  .aac-backdrop.aac-open { display: block; }
+  .aac-head {
+    background: var(--aac-accent); color: #fff; padding: 12px 16px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .aac-head .aac-avatar { font-size: 22px; }
+  .aac-head .aac-title { font-weight: 600; flex: 1; }
+  .aac-close { background: none; border: none; color: #fff;
+               font-size: 20px; cursor: pointer; }
+  .aac-log { flex: 1; overflow-y: auto; padding: 14px;
+             background: #f5f7fb; display: flex; flex-direction: column;
+             gap: 10px; }
+  .aac-msg { max-width: 85%; padding: 9px 12px; border-radius: 12px;
+             white-space: pre-wrap; word-break: break-word; }
+  .aac-msg.aac-user { align-self: flex-end; background: var(--aac-accent);
+                      color: #fff; border-bottom-right-radius: 4px; }
+  .aac-msg.aac-bot { align-self: flex-start; background: #fff;
+                     border: 1px solid #e3e7ef;
+                     border-bottom-left-radius: 4px; }
+  .aac-card { align-self: stretch; background: #fff; border: 1px solid #e3e7ef;
+              border-left: 3px solid var(--aac-accent); border-radius: 8px;
+              padding: 8px 10px; font-size: 12.5px; }
+  .aac-card b { color: var(--aac-accent); }
+  .aac-card table { border-collapse: collapse; margin-top: 4px; width: 100%; }
+  .aac-card td { padding: 1px 6px 1px 0; vertical-align: top; }
+  .aac-card td:first-child { color: #667; white-space: nowrap; }
+  .aac-form { display: flex; border-top: 1px solid #e3e7ef; }
+  .aac-input { flex: 1; border: none; padding: 12px 14px; font: inherit;
+               outline: none; }
+  .aac-send { border: none; background: var(--aac-accent); color: #fff;
+              padding: 0 18px; font: inherit; cursor: pointer; }
+  .aac-typing { font-style: italic; color: #889; }
+</style>
+
+<button type="button" class="aac-launcher" id="aac-launcher"
+        aria-label="Open {{ bot.name }} chat">
+  {% if bot.avatar_image_url %}<img src="{{ bot.avatar_image_url }}"
+       alt="{{ bot.name }}">{% else %}{{ bot.avatar_emoji }}{% endif %}
+</button>
+
+<div class="aac-backdrop" id="aac-backdrop"></div>
+<section class="aac-panel aac-{{ bot.window_mode }}" id="aac-panel"
+         role="dialog" aria-label="{{ bot.name }} chat">
+  <header class="aac-head">
+    <span class="aac-avatar">{% if bot.avatar_image_url %}<img
+        src="{{ bot.avatar_image_url }}" alt=""
+        style="width:24px;height:24px;border-radius:50%">{% else %}{{ bot.avatar_emoji }}{% endif %}</span>
+    <span class="aac-title">{{ bot.name }}</span>
+    <button type="button" class="aac-close" id="aac-close"
+            aria-label="Close">&times;</button>
+  </header>
+  <div class="aac-log" id="aac-log"></div>
+  <form class="aac-form" id="aac-form">
+    {% csrf_token %}
+    <input class="aac-input" id="aac-input" autocomplete="off"
+           placeholder="{{ bot.placeholder_text }}">
+    <button class="aac-send" type="submit">Send</button>
+  </form>
+</section>
+
+<script>
+(function () {
+  "use strict";
+  var chatUrl = "{% url 'ai_agent_core:bot_chat' %}";
+  var panel = document.getElementById("aac-panel"),
+      backdrop = document.getElementById("aac-backdrop"),
+      log = document.getElementById("aac-log"),
+      form = document.getElementById("aac-form"),
+      input = document.getElementById("aac-input"),
+      launcher = document.getElementById("aac-launcher"),
+      isPopup = panel.classList.contains("aac-popup"),
+      conversationId = null, greeted = false;
+
+  var GREETING = "{{ bot.greeting|escapejs }}";
+
+  function open_() {
+    panel.classList.add("aac-open");
+    if (isPopup) backdrop.classList.add("aac-open");
+    input.focus();
+  }
+  function close_() {
+    panel.classList.remove("aac-open");
+    backdrop.classList.remove("aac-open");
+  }
+  function addMsg(role, text) {
+    var el = document.createElement("div");
+    el.className = "aac-msg aac-" + role;
+    el.textContent = text;
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+    return el;
+  }
+  function addCard(result) {
+    var el = document.createElement("div");
+    el.className = "aac-card";
+    var html = "<b>" + result.table + "</b>";
+    result.rows.forEach(function (row) {
+      html += "<table>";
+      Object.keys(row).forEach(function (k) {
+        html += "<tr><td>" + k + "</td><td>" +
+                String(row[k] === null ? "—" : row[k])
+                  .replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</td></tr>";
+      });
+      html += "</table>";
+    });
+    el.innerHTML = html;
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  launcher.addEventListener("click", function () {
+    if (panel.classList.contains("aac-open")) { close_(); return; }
+    open_();
+    if (!greeted) { greeted = true; addMsg("bot", GREETING); }
+  });
+  document.getElementById("aac-close").addEventListener("click", close_);
+  backdrop.addEventListener("click", close_);
+
+  form.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var msg = input.value.trim();
+    if (!msg) return;
+    input.value = "";
+    addMsg("user", msg);
+    var typing = addMsg("bot", "…thinking");
+    typing.classList.add("aac-typing");
+    fetch(chatUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": form.querySelector("[name=csrfmiddlewaretoken]").value
+      },
+      credentials: "same-origin",
+      body: JSON.stringify({message: msg, conversation_id: conversationId})
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      typing.remove();
+      if (data.error) { addMsg("bot", "Error: " + data.error); return; }
+      conversationId = data.conversation_id;
+      addMsg("bot", data.reply);
+      (data.results || []).forEach(addCard);
+    }).catch(function () {
+      typing.remove();
+      addMsg("bot", "Sorry — I could not reach the server.");
+    });
+  });
+})();
+</script>
+{% endif %}

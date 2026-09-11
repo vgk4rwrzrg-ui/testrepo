@@ -37,3 +37,74 @@ def proxy_debug(request):
         "active_profile": get_default_profile_name(),
         "available_profiles": list_profiles(),
     })
+
+
+# ---------------------------------------------------------------------------
+# Bot chat API + widget demo page
+# ---------------------------------------------------------------------------
+import json
+
+from django.shortcuts import render
+from django.views.decorators.http import require_POST
+
+from .models import BotChatMessage, BotConversation, BotProfile
+from .search import answer
+
+
+@require_POST
+def bot_chat(request):
+    """Chat endpoint used by the floating widget (CSRF-protected POST).
+
+    Body: {"message": str, "conversation_id": int|null}
+    Returns: {"reply": str, "results": [...], "conversation_id": int,
+              "bot": {"name": ...}}
+    """
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return JsonResponse({"error": "Invalid JSON body."}, status=400)
+
+    message = (payload.get("message") or "").strip()
+    if not message:
+        return JsonResponse({"error": "Empty message."}, status=400)
+    if len(message) > 2000:
+        return JsonResponse({"error": "Message too long."}, status=400)
+
+    bot = BotProfile.get_default()
+    user = request.user if request.user.is_authenticated else None
+
+    conversation = None
+    conv_id = payload.get("conversation_id")
+    if conv_id:
+        conversation = BotConversation.objects.filter(pk=conv_id).first()
+        if conversation and conversation.user and conversation.user != user:
+            conversation = None  # never continue someone else's thread
+    if conversation is None:
+        if not request.session.session_key:
+            request.session.save()
+        conversation = BotConversation.objects.create(
+            user=user,
+            session_key=request.session.session_key or "",
+            bot_name=getattr(bot, "name", "Assistant"))
+
+    history = [{"role": m.role, "content": m.content}
+               for m in conversation.messages.all()[:20]]
+    BotChatMessage.objects.create(conversation=conversation,
+                                  role="user", content=message)
+
+    result = answer(request.user, message, bot, history)
+    BotChatMessage.objects.create(conversation=conversation, role="bot",
+                                  content=result["reply"],
+                                  results=result["results"])
+    return JsonResponse({
+        "reply": result["reply"],
+        "results": result["results"] if (bot is None or bot.show_result_cards)
+                   else [],
+        "conversation_id": conversation.pk,
+        "bot": {"name": getattr(bot, "name", "Assistant")},
+    })
+
+
+def widget_demo(request):
+    """Standalone page rendering the floating bot widget (for smoke tests)."""
+    return render(request, "ai_agent_core/widget_demo.html")

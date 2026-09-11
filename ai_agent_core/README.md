@@ -289,3 +289,67 @@ Covers: group grant + field narrowing, denial + audit, hidden-field filter
 blocking, superuser bypass, aggregate-only mode, priority `deny` override,
 policy validation against the legacy allowlist, prefix stripping,
 prefix inference, and spoof-resistant client-IP resolution.
+
+
+---
+
+## 8. The chat bot: identity, floating widget, and dynamic table registration
+
+### 8.1 Bot name & personality (admin-configurable)
+
+*AI Agent Core → Bot profiles* in the admin. Each `BotProfile` holds:
+
+* **Identity**: `name`, `avatar_emoji` **or** `avatar_image_url`, `greeting`,
+  free-text `personality`, optional `system_prompt` (both are passed to your
+  LLM handler and complement the file-based profiles from §3).
+* **Chat window**: `window_mode` — **Docked right**, **Docked left**, or
+  **Centered popup** — plus `primary_color`, `placeholder_text`, and
+  `show_result_cards`.
+* Exactly one profile is `is_default`; saving another default demotes the rest.
+
+### 8.2 Putting the bot icon on screen
+
+```django
+{% load ai_agent_tags %}
+...
+{% ai_bot_widget %}          {# default active profile #}
+{% ai_bot_widget 3 %}        {# or a specific BotProfile pk #}
+```
+
+Drop the tag into your base template (before `</body>`). It renders a
+self-contained floating launcher icon; clicking it opens the chat window in
+the position configured on the profile (left dock / right dock / popup with
+backdrop). No external JS/CSS dependencies; all URLs go through `{% url %}`
+so the widget works untouched behind the JupyterHub double proxy. A
+standalone demo page ships at `…/widget-demo/`.
+
+### 8.3 Registering tables & fields from the admin
+
+*AI Agent Core → Searchable tables*: add any installed model
+(`app_label` + `model_name`, validated against `apps.get_model`), then add
+its fields inline. Registered tables are merged into the engine allowlist at
+runtime (`registry.py`) — **no code change or redeploy**. Security-denied
+field names (`password`, `token`, …) are rejected at registration *and*
+filtered again at sync (defence in depth). Access still requires a
+`TableAccessPolicy` (§4) unless `AI_AGENT_DEFAULT_TABLE_ACCESS = "read"`.
+
+### 8.4 Opening certain fields to certain users
+
+On a `SearchableField`, leave **groups** empty to expose the field to
+everyone with table access — or select Groups to make the field visible
+**only** to their members. Non-members neither receive the field in results
+nor may filter/order on it. (For legacy-allowlisted tables, use
+`TableAccessPolicy.allowed_fields` per group instead.)
+
+### 8.5 Chat pipeline & LLM hook
+
+`POST …/chat/` (CSRF-protected JSON: `{"message", "conversation_id"}`)
+persists the thread (`BotConversation`/`BotChatMessage`, browsable read-only
+in the admin) and answers via `search.py`:
+
+1. keyword retrieval with `icontains` across every table/field the user may
+   see — **all reads go through the `guarded_*` wrappers**, so policies,
+   field narrowing and auditing apply to the bot too;
+2. if `AI_AGENT_LLM_HANDLER = "myproject.ai.answer"` is set, your callable
+   `(user, message, results, bot, history)` produces the final reply from
+   the retrieved context; otherwise a built-in summary reply is used.

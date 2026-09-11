@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from django.conf import settings
 
+from . import registry
 from .legacy.ai_tools import ALLOWED_MODELS, resolve_model_path
 from .models import TableAccessAudit, TableAccessPolicy
 
@@ -47,9 +48,13 @@ def check_access(user, model_path: str, action: str = "fetch") -> AccessDecision
     ``action`` is 'fetch' or 'aggregate'.  Raises ``ValueError`` for an
     invalid/non-allowlisted model path (same semantics as the legacy engine).
     """
+    registry.sync_registry()  # merge admin-registered tables (lazy, TTL)
     app_label, model_name = resolve_model_path(model_path)  # legacy validation
     resolved = f"{app_label}.{model_name}"
-    legacy_fields = list(ALLOWED_MODELS[app_label][model_name])
+    # Allowlisted fields, narrowed to those this user's groups may see.
+    legacy_fields = registry.visible_fields(
+        user, app_label, model_name,
+        ALLOWED_MODELS[app_label][model_name])
 
     if user is None or not getattr(user, "is_authenticated", False):
         return AccessDecision(False, resolved,
@@ -103,6 +108,7 @@ def check_access(user, model_path: str, action: str = "fetch") -> AccessDecision
 
 def accessible_models(user) -> Dict[str, List[str]]:
     """Subset of the legacy catalogue this user may see (for list_models)."""
+    registry.sync_registry()
     out: Dict[str, List[str]] = {}
     for app_label, model_map in ALLOWED_MODELS.items():
         for model_name in model_map:

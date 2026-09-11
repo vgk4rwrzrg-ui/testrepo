@@ -147,3 +147,176 @@ class TableAccessAudit(models.Model):
     def __str__(self):
         verdict = "ALLOW" if self.was_allowed else "DENY"
         return f"{verdict} {self.username} {self.action} {self.model_path}"
+
+
+# ===========================================================================
+# Bot identity, dynamic table registration, and chat persistence
+# ===========================================================================
+
+class BotProfile(models.Model):
+    """Admin-configurable identity + chat-window behaviour of the bot."""
+
+    class WindowMode(models.TextChoices):
+        RIGHT = "right", "Docked right"
+        LEFT = "left", "Docked left"
+        POPUP = "popup", "Centered popup"
+
+    name = models.CharField(max_length=80, default="Assistant")
+    avatar_emoji = models.CharField(
+        max_length=8, default="\U0001F916",
+        help_text="Emoji shown on the launcher icon (ignored if an image URL "
+                  "is set).")
+    avatar_image_url = models.URLField(
+        blank=True,
+        help_text="Optional image URL for the launcher/avatar.")
+    greeting = models.CharField(
+        max_length=255,
+        default="Hi! Ask me anything about your data.",
+        help_text="First message shown when the chat opens.")
+    personality = models.TextField(
+        blank=True,
+        help_text="Free-text persona description; passed to the LLM handler "
+                  "and merged over the file-based profile.")
+    system_prompt = models.TextField(
+        blank=True,
+        help_text="Optional system prompt override for the LLM handler.")
+    window_mode = models.CharField(
+        max_length=10, choices=WindowMode.choices, default=WindowMode.RIGHT,
+        help_text="Where the chat window appears: docked left, docked right, "
+                  "or a centered popup.")
+    primary_color = models.CharField(
+        max_length=7, default="#2563eb",
+        help_text="Hex accent color for the widget.")
+    placeholder_text = models.CharField(
+        max_length=120, default="Type a question…")
+    show_result_cards = models.BooleanField(
+        default=True,
+        help_text="Render matching rows as cards under the bot reply.")
+    is_active = models.BooleanField(default=True)
+    is_default = models.BooleanField(
+        default=False,
+        help_text="The default profile rendered by {% ai_bot_widget %}.")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-is_default", "name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.get_window_mode_display()})"
+
+    @classmethod
+    def get_default(cls):
+        return (cls.objects.filter(is_active=True)
+                .order_by("-is_default", "id").first())
+
+
+class SearchableTable(models.Model):
+    """Dynamically registers a project model as searchable by the bot.
+
+    Complements the static legacy allowlist: rows here are merged into the
+    engine's allowlist at runtime (see ``ai_agent_core.registry``), so any
+    Django model in the project can be opened to the bot from the admin --
+    no code change, no redeploy.
+    """
+    app_label = models.CharField(max_length=100)
+    model_name = models.CharField(max_length=100)
+    description = models.CharField(
+        max_length=255, blank=True,
+        help_text="Shown to the LLM/agent as table context.")
+    enabled = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("app_label", "model_name")]
+        ordering = ["app_label", "model_name"]
+
+    def __str__(self):
+        return f"{self.app_label}.{self.model_name}"
+
+    def clean(self):
+        from django.apps import apps as django_apps
+        try:
+            django_apps.get_model(self.app_label, self.model_name)
+        except LookupError:
+            raise ValidationError(
+                f"No installed model '{self.app_label}.{self.model_name}'.")
+
+
+class SearchableField(models.Model):
+    """A field opened for searching, optionally restricted to Groups.
+
+    Leave ``groups`` empty to expose the field to every user who can access
+    the table; add groups to open the field ONLY to those groups
+    ("certain fields for certain users").
+    """
+    table = models.ForeignKey(
+        SearchableTable, on_delete=models.CASCADE, related_name="fields")
+    field_name = models.CharField(max_length=100)
+    groups = models.ManyToManyField(
+        Group, blank=True, related_name="visible_search_fields",
+        help_text="Empty = visible to everyone with table access; otherwise "
+                  "only these groups see this field.")
+    description = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        unique_together = [("table", "field_name")]
+        ordering = ["table", "field_name"]
+
+    def __str__(self):
+        return f"{self.table}.{self.field_name}"
+
+    def clean(self):
+        from django.apps import apps as django_apps
+        from .legacy.ai_tools import DENIED_FIELDS
+        if self.field_name.lower() in DENIED_FIELDS:
+            raise ValidationError(
+                {"field_name": f"'{self.field_name}' is security-denied and "
+                               "can never be exposed."})
+        try:
+            model = django_apps.get_model(self.table.app_label,
+                                          self.table.model_name)
+        except LookupError:
+            return  # table.clean() reports this
+        try:
+            model._meta.get_field(self.field_name)
+        except Exception:
+            raise ValidationError(
+                {"field_name": f"'{self.field_name}' is not a field of "
+                               f"{self.table}."})
+
+
+class BotConversation(models.Model):
+    """One chat thread between a user (or anonymous session) and the bot."""
+    user = models.ForeignKey(
+        "auth.User", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="bot_conversations")
+    session_key = models.CharField(max_length=64, blank=True, db_index=True)
+    bot_name = models.CharField(max_length=80, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-started_at"]
+
+    def __str__(self):
+        who = self.user.username if self.user else f"anon:{self.session_key[:8]}"
+        return f"Conversation #{self.pk} with {who}"
+
+
+class BotChatMessage(models.Model):
+    class Role(models.TextChoices):
+        USER = "user", "User"
+        BOT = "bot", "Bot"
+
+    conversation = models.ForeignKey(
+        BotConversation, on_delete=models.CASCADE, related_name="messages")
+    role = models.CharField(max_length=10, choices=Role.choices)
+    content = models.TextField()
+    results = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"{self.role}: {self.content[:40]}"

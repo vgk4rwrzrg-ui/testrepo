@@ -19,3 +19,15 @@ class AiAgentCoreConfig(AppConfig):
         # proxy security settings).  Imported here so Django is fully
         # loaded first.
         from . import checks  # noqa: F401
+
+        # Invalidate the dynamic table registry whenever an admin edits
+        # registrations (models are loaded now, so imports are safe).
+        from django.db.models.signals import (m2m_changed, post_delete,
+                                              post_save)
+        from . import registry
+        from .models import SearchableField, SearchableTable
+        for model in (SearchableTable, SearchableField):
+            post_save.connect(registry.mark_dirty, sender=model)
+            post_delete.connect(registry.mark_dirty, sender=model)
+        m2m_changed.connect(registry.mark_dirty,
+                            sender=SearchableField.groups.through)
