@@ -508,3 +508,53 @@ anyone else). End-user documentation lives in **[USER_GUIDE.md](USER_GUIDE.md)**
   attempted formula. The AI has no write path at all (the legacy engine is
   read-only by construction), so reads + calculations ARE the complete
   data-access surface, and all of it is audited.
+
+
+---
+
+## 12. Formulas in the database (`compute_data`) — incl. cross-table
+
+`ai_agent_core.compute.guarded_compute_data(user, model_path, expression, …)`
+evaluates arithmetic like `"A / B * A"` **inside the database**, never in the
+LLM's head:
+
+* Expression parsed with `ast`; only numbers, field names, `+ - * /`, unary
+  minus and parentheses are accepted (no calls/attributes/comparisons —
+  `__import__`, `**`, `.__class__` etc. are rejected, tested).
+* Compiled to Django `F()`/`Cast`/`ExpressionWrapper`; division uses
+  `NULLIF(denominator, 0)` → divide-by-zero gives `null`, not an error or a
+  hallucinated value. Exact math over **all** matching rows.
+* Modes: per-row results (paginated), or `aggregate=sum|avg|min|max|count`
+  of the computed value, optionally `group_by`.
+* **Cross-table**:
+  * related tables via `Relation__field` operands (e.g.
+    `word_count / job__total_chapters`) — every hop is validated against the
+    legacy allowlist/denylist **and the related table's Group policy** for
+    that user (denied → `PERMISSION_DENIED` naming the table);
+  * unrelated tables via `scalars={name: {model, func, field, filters?}}` —
+    each scalar is an audited aggregate call whose value becomes a constant
+    in the formula (e.g. `Salary / avg_salary`).
+* Only fields visible to the user's groups can appear in formulas, filters,
+  group_by or order_by.
+* **Audited**: action `compute`, `query` JSON = expression, fields touched,
+  filters, scalar values, ok flag, and the computed result; denied attempts
+  (table, hidden field, or related table) are logged as DENIED with the
+  attempted formula.
+
+## 13. Using your own LLM router / RAG (no Larry required)
+
+`ai_agent_core.integrations` mirrors the legacy `llm/tool_def.py` interface
+(`TOOL_SCHEMAS`, `execute_tool(name, arguments, user)`, `field_legend`) and
+adds `compute_data` + `rag_context(user, question)`. Swap one import in your
+router:
+
+```python
+from ai_agent_core.integrations import TOOL_SCHEMAS, execute_tool, field_legend
+```
+
+Every tool call — from Larry, from the icon in your own app, from a
+notebook or another service — then goes through the same Group policies,
+field narrowing and audit log. Point `AI_AGENT_LLM_HANDLER` /
+`AI_AGENT_REPORT_WRITER` at your router if you also want Larry to answer
+through it. The legacy `llllm/` package is untouched and keeps working
+as-is.

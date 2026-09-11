@@ -13,6 +13,7 @@ Expose ONLY these ``guarded_*`` functions to the agent's tool registry.
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Dict, Optional
 
 from .access import accessible_models, check_access, record_audit
@@ -29,6 +30,14 @@ def _denied(decision) -> Dict[str, Any]:
     return _err(PERMISSION_DENIED, decision.reason,
                 "Ask an administrator to map your Django group to this "
                 "table in the AI Agent Core admin (Table access policies).")
+
+
+def _field_denied(decision, field: str):
+    """Copy of a table-level ALLOW decision downgraded to DENY because a
+    hidden field was requested -- so the audit log records the true verdict."""
+    return dataclasses.replace(
+        decision, allowed=False,
+        reason=f"Field '{field}' is hidden from the user's groups by policy.")
 
 
 def _first_segment_ok(decision, keys) -> Optional[str]:
@@ -70,7 +79,8 @@ def guarded_fetch_data(user,
         + ([order_by] if order_by else []),
     )
     if hidden is not None:
-        record_audit(user, "fetch", decision, query=query)
+        record_audit(user, "fetch", _field_denied(decision, hidden),
+                     query=query)
         return _err(PERMISSION_DENIED,
                     f"Field '{hidden}' is hidden from your groups by policy.",
                     "Filter/order only on fields returned by "
@@ -125,7 +135,8 @@ def guarded_aggregate_data(user,
         + ([group_by] if group_by else []),
     )
     if hidden is not None:
-        record_audit(user, "aggregate", decision, query=query)
+        record_audit(user, "aggregate", _field_denied(decision, hidden),
+                     query=query)
         return _err(PERMISSION_DENIED,
                     f"Field '{hidden}' is hidden from your groups by policy.",
                     "Aggregate only on fields returned by "
@@ -146,6 +157,65 @@ def guarded_aggregate_data(user,
                             if result.get("ok")
                             and isinstance(result.get("data"), list)
                             else None))
+    return result
+
+
+def guarded_fetch_related(user,
+                          model_path: str,
+                          pk: Any,
+                          relation: str,
+                          limit: int = legacy.DEFAULT_LIMIT,
+                          offset: int = 0) -> Dict[str, Any]:
+    """Group-guarded ``legacy.fetch_related``: both the parent table and the
+    related table must be granted to the user; related rows are narrowed
+    to the fields the user may see on the related table."""
+    try:
+        decision = check_access(user, model_path, action="fetch")
+    except ValueError as e:
+        return _err("VALIDATION_ERROR", str(e),
+                    "Use guarded_list_models() to see valid paths.")
+    query = {"pk": pk, "relation": relation, "limit": limit,
+             "offset": offset}
+    if not decision.allowed:
+        record_audit(user, "related", decision, query=query)
+        return _denied(decision)
+    if relation not in decision.fields:
+        record_audit(user, "related", _field_denied(decision, relation),
+                     query=query)
+        return _err(PERMISSION_DENIED,
+                    f"Relation '{relation}' is hidden from your groups.",
+                    "Use guarded_describe_model() to see visible fields.")
+
+    # Resolve the related table and check ITS policy for this user.
+    from django.apps import apps as django_apps
+    app_label, model_name = decision.model_path.split(".")
+    try:
+        fld = django_apps.get_model(app_label, model_name)._meta.get_field(
+            legacy.resolve_field(model_name, relation))
+        rel = fld.related_model
+        rel_label = f"{rel._meta.app_label}.{rel._meta.object_name}"
+        rel_decision = check_access(user, rel_label, action="fetch")
+    except Exception as e:
+        record_audit(user, "related", decision, query=query)
+        return _err("VALIDATION_ERROR", str(e), "Check the relation name.")
+    if not rel_decision.allowed:
+        query["related_model"] = rel_label
+        record_audit(user, "related", rel_decision, query=query)
+        return _denied(rel_decision)
+
+    if decision.max_rows:
+        limit = min(int(limit), decision.max_rows)
+    result = legacy.fetch_related(decision.model_path, pk, relation,
+                                  user=user, limit=limit, offset=offset)
+    if result.get("ok") and rel_decision.fields:
+        allowed = set(rel_decision.fields)
+        result["data"]["rows"] = [
+            {k: v for k, v in row.items() if k in allowed}
+            for row in result["data"].get("rows", [])]
+    query["related_model"] = rel_label
+    record_audit(user, "related", decision, query=query,
+                 row_count=(len(result["data"]["rows"])
+                            if result.get("ok") else None))
     return result
 
 

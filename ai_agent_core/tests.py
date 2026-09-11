@@ -710,3 +710,183 @@ class CalculationAuditTests(TestCase):
             username="bob", action="aggregate").latest("created_at")
         self.assertFalse(audit.was_allowed)
         self.assertEqual(audit.query["func"], "sum")   # attempt is on record
+
+
+class ComputeFormulaTests(TestCase):
+    """Audited in-database formulas, incl. cross-table."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from .models import ReportChapter, ReportJob, SearchableField, SearchableTable
+        cls.hr = Group.objects.create(name="HR")
+        cls.alice = User.objects.create_user("alice")
+        cls.alice.groups.add(cls.hr)
+        cls.bob = User.objects.create_user("bob")
+        # Register two related tables (chapter -> job)
+        t1 = SearchableTable.objects.create(app_label="ai_agent_core",
+                                            model_name="ReportChapter")
+        for f in ("id", "index", "word_count", "job"):
+            SearchableField.objects.create(table=t1, field_name=f)
+        t2 = SearchableTable.objects.create(app_label="ai_agent_core",
+                                            model_name="ReportJob")
+        for f in ("id", "total_chapters", "chapters_done"):
+            SearchableField.objects.create(table=t2, field_name=f)
+        from . import registry
+        registry.mark_dirty()
+        registry.sync_registry(force=True)
+        for model in ("ReportChapter", "ReportJob"):
+            p = TableAccessPolicy.objects.create(
+                app_label="ai_agent_core", model_name=model,
+                access_level="read")
+            p.groups.add(cls.hr)
+        # bob: chapters yes (but word_count hidden), jobs NO
+        TableAccessPolicy.objects.create(
+            app_label="ai_agent_core", model_name="ReportChapter",
+            access_level="read", allowed_fields=["id", "index", "job"],
+            applies_to_all_authenticated=True, priority=-1)
+        # alice may also count users (for scalars)
+        pu = TableAccessPolicy.objects.create(
+            app_label="auth", model_name="User", access_level="read")
+        pu.groups.add(cls.hr)
+        cls.job = ReportJob.objects.create(request_text="x", title="T",
+                                           total_chapters=4)
+        for idx, wc in ((1, 100), (2, 200), (4, 0)):
+            ReportChapter.objects.create(job=cls.job, index=idx,
+                                         title=f"c{idx}", word_count=wc)
+
+    def _c(self, user, **kw):
+        from .compute import guarded_compute_data
+        return guarded_compute_data(user, "ai_agent_core.ReportChapter", **kw)
+
+    def test_row_formula_a_div_b_times_a(self):
+        r = self._c(self.alice, expression="word_count / index * word_count",
+                    order_by="index")
+        self.assertTrue(r["ok"], r)
+        by_idx = {row["index"]: row["result"] for row in r["data"]["rows"]}
+        self.assertEqual(by_idx[1], 100 / 1 * 100)
+        self.assertEqual(by_idx[2], 200 / 2 * 200)
+        self.assertEqual(by_idx[4], 0.0)
+
+    def test_division_by_zero_yields_null_not_error(self):
+        r = self._c(self.alice, expression="index / word_count")
+        self.assertTrue(r["ok"], r)
+        by_idx = {row["index"]: row["result"] for row in r["data"]["rows"]}
+        self.assertIsNone(by_idx[4])          # 4 / 0 -> null
+        self.assertEqual(by_idx[1], 0.01)
+
+    def test_aggregate_of_formula(self):
+        r = self._c(self.alice, expression="word_count * 2", aggregate="sum")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["data"]["result"], 600.0)
+
+    def test_grouped_aggregate(self):
+        r = self._c(self.alice, expression="word_count", aggregate="sum",
+                    group_by="job")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["data"]["result"][0]["result"], 300.0)
+
+    def test_cross_table_via_relation_path(self):
+        r = self._c(self.alice, expression="word_count / job__total_chapters",
+                    filters={"index": 1})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["data"]["rows"][0]["result"], 25.0)   # 100 / 4
+
+    def test_cross_table_denied_when_related_table_not_granted(self):
+        r = self._c(self.bob, expression="index / job__total_chapters")
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["error"]["code"], "PERMISSION_DENIED")
+        self.assertIn("ReportJob", r["error"]["message"])
+
+    def test_cross_table_via_scalars_from_unrelated_table(self):
+        r = self._c(self.alice, expression="word_count / total_users",
+                    filters={"index": 2},
+                    scalars={"total_users": {"model": "auth.User",
+                                             "func": "count", "field": "id"}})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["data"]["rows"][0]["result"], 200 / 2)  # 2 users
+        self.assertEqual(r["data"]["scalars"][0]["value"], 2.0)
+
+    def test_hidden_field_cannot_be_used_in_formula(self):
+        r = self._c(self.bob, expression="word_count * 2")
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["error"]["code"], "PERMISSION_DENIED")
+
+    def test_unsafe_syntax_rejected(self):
+        for bad in ("__import__('os').system('x')", "word_count ** 2",
+                    "index.__class__", "max(index, 1)", "index > 1"):
+            r = self._c(self.alice, expression=bad)
+            self.assertFalse(r["ok"], bad)
+            self.assertEqual(r["error"]["code"], "VALIDATION_ERROR", bad)
+
+    def test_formula_and_result_are_audited(self):
+        self._c(self.alice, expression="word_count / index", aggregate="avg")
+        a = TableAccessAudit.objects.filter(action="compute").latest("created_at")
+        self.assertTrue(a.was_allowed)
+        self.assertEqual(a.query["expression"], "word_count / index")
+        self.assertEqual(a.query["aggregate"], "avg")
+        self.assertEqual(a.query["fields"], ["index", "word_count"])
+        self.assertTrue(a.query["ok"])
+        self.assertIn("result", a.query)
+        # denied attempt also on record with the attempted formula
+        self._c(self.bob, expression="word_count * 2")
+        d = TableAccessAudit.objects.filter(action="compute",
+                                            username="bob").latest("created_at")
+        self.assertFalse(d.was_allowed)
+        self.assertEqual(d.query["expression"], "word_count * 2")
+
+
+class RouterIntegrationTests(TestCase):
+    """Your own LLM router can use the audited tools (no Larry required)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.hr = Group.objects.create(name="HR")
+        cls.alice = User.objects.create_user("alice")
+        cls.alice.groups.add(cls.hr)
+        for model in ("User", "Group"):
+            p = TableAccessPolicy.objects.create(
+                app_label="auth", model_name=model, access_level="read")
+            p.groups.add(cls.hr)
+
+    def test_schemas_cover_legacy_tools_plus_compute(self):
+        from .integrations import TOOL_SCHEMAS
+        names = {s["function"]["name"] for s in TOOL_SCHEMAS}
+        self.assertEqual(names, {"list_models", "describe_model",
+                                 "fetch_data", "aggregate_data",
+                                 "fetch_related", "compute_data"})
+
+    def test_execute_tool_openai_style(self):
+        import json
+        from .integrations import execute_tool
+        out = json.loads(execute_tool(
+            "aggregate_data",
+            json.dumps({"model_path": "auth.User", "func": "count",
+                        "field": "id"}), user=self.alice))
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["data"], 1)
+        out = json.loads(execute_tool(
+            "compute_data", {"model_path": "auth.User",
+                             "expression": "id * 10"}, user=self.alice))
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(out["data"]["rows"][0]["result"], self.alice.pk * 10)
+        bad = json.loads(execute_tool("drop_table", "{}", user=self.alice))
+        self.assertEqual(bad["error"]["code"], "UNKNOWN_TOOL")
+
+    def test_fetch_related_is_guarded_and_audited(self):
+        from .utils import guarded_fetch_related
+        r = guarded_fetch_related(self.alice, "auth.User", self.alice.pk,
+                                  "groups")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["data"]["rows"][0]["name"], "HR")
+        self.assertTrue(TableAccessAudit.objects.filter(
+            action="related", was_allowed=True).exists())
+        bob = User.objects.create_user("bob")
+        self.assertFalse(guarded_fetch_related(
+            bob, "auth.User", self.alice.pk, "groups")["ok"])
+
+    def test_rag_context_for_external_router(self):
+        from .integrations import rag_context
+        ctx = rag_context(self.alice, "alice")
+        self.assertIn("sources", ctx)
+        self.assertIn("model", ctx)
+        self.assertIn("compute_data", ctx["tools"])

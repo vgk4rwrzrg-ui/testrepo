@@ -124,6 +124,8 @@ class TableAccessAudit(models.Model):
         AGGREGATE = "aggregate", "Aggregate"
         DESCRIBE = "describe", "Describe model"
         LIST = "list", "List models"
+        COMPUTE = "compute", "Compute formula"
+        RELATED = "related", "Fetch related rows"
 
     user = models.ForeignKey(
         "auth.User", null=True, blank=True,
