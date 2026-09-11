@@ -121,6 +121,8 @@ def bot_chat(request):
         "results": result["results"] if (bot is None or bot.show_result_cards)
                    else [],
         "conversation_id": conversation.pk,
+        "sources": result.get("sources", []),
+        "model": result.get("model", {}),
         "bot": {"name": getattr(bot, "name", "Assistant")},
     }
 
@@ -148,7 +150,9 @@ def _generate_chat_document(request, fmt, message, result, bot):
     try:
         theme = get_default_theme()
         spec = spec_from_chat(message, result["reply"], result["results"],
-                              bot)
+                              bot, user=request.user,
+                              sources=result.get("sources"),
+                              model_info=result.get("model"))
         data, ctype, ext = build_document(fmt, spec, theme)
     except RuntimeError as exc:      # library missing on this install
         return None, str(exc)

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from django.apps import apps as django_apps
 from django.conf import settings
@@ -58,8 +58,42 @@ def _text_fields(app_label: str, model_name: str,
     return out
 
 
-def run_search(user, message: str) -> List[Dict[str, Any]]:
-    """Keyword retrieval across every table the user may see."""
+def ai_model_info() -> Dict[str, Any]:
+    """Provenance: which AI engine/model produced this content.
+
+    Pulled from the active config profile (engine.provider / engine.model)
+    plus any configured LLM handler hooks. Never raises -- missing config
+    degrades to the built-in retrieval description.
+    """
+    info: Dict[str, Any] = {
+        "app": "ai_agent_core",
+        "provider": None,
+        "model": None,
+        "chat_handler": getattr(settings, "AI_AGENT_LLM_HANDLER", None),
+        "report_writer": getattr(settings, "AI_AGENT_REPORT_WRITER", None),
+        "mode": "built-in guarded retrieval (no external LLM)",
+    }
+    try:
+        from .conf import load_profile
+        engine = (load_profile() or {}).get("engine") or {}
+        info["provider"] = engine.get("provider") or None
+        info["model"] = engine.get("model") or None
+    except Exception:  # config dir absent: keep safe defaults
+        pass
+    if info["chat_handler"] or info["report_writer"]:
+        info["mode"] = "LLM handler"
+    return info
+
+
+def run_search(user, message: str,
+               searched: Optional[List[Dict[str, Any]]] = None
+               ) -> List[Dict[str, Any]]:
+    """Keyword retrieval across every table the user may see.
+
+    Pass a list as ``searched`` to receive one audit entry per scanned
+    table: {"table", "rows", "hit"} -- the raw material for the chat's
+    collapsible sources trail and document audit sections.
+    """
     registry.sync_registry()
     catalogue = guarded_list_models(user)["data"]
     terms = _terms(message)
@@ -91,6 +125,10 @@ def run_search(user, message: str) -> List[Dict[str, Any]]:
         if table_rows:
             results.append({"table": path,
                             "rows": table_rows[:ROWS_PER_TABLE]})
+        if searched is not None:
+            searched.append({"table": path,
+                             "rows": len(table_rows[:ROWS_PER_TABLE]),
+                             "hit": bool(table_rows)})
     return results
 
 
@@ -109,7 +147,10 @@ def _default_reply(bot_name: str, message: str,
 def answer(user, message: str, bot,
            history: List[Dict[str, str]]) -> Dict[str, Any]:
     """Full pipeline: retrieve -> (optional LLM) -> reply + result cards."""
-    results = run_search(user, message)
+    searched: List[Dict[str, Any]] = []
+    results = run_search(user, message, searched=searched)
+    sources = sorted(searched, key=lambda x: (not x["hit"], x["table"]))
+    model = ai_model_info()
 
     handler_path = getattr(settings, "AI_AGENT_LLM_HANDLER", None)
     if handler_path:
@@ -117,10 +158,11 @@ def answer(user, message: str, bot,
             handler = import_string(handler_path)
             reply = handler(user=user, message=message, results=results,
                             bot=bot, history=history)
-            return {"reply": reply, "results": results}
+            return {"reply": reply, "results": results,
+                    "sources": sources, "model": model}
         except Exception:
             logger.exception("AI_AGENT_LLM_HANDLER failed; falling back.")
 
     name = getattr(bot, "name", "Assistant")
     return {"reply": _default_reply(name, message, results),
-            "results": results}
+            "results": results, "sources": sources, "model": model}
