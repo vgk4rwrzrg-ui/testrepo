@@ -501,3 +501,10 @@ anyone else). End-user documentation lives in **[USER_GUIDE.md](USER_GUIDE.md)**
   `TableAccessAudit` rows recorded while the job ran (reads with
   allowed/denied counts per table); the markdown download gets the same
   footer.
+* **Calculations**: every aggregation the AI runs (count/sum/avg/min/max,
+  field, filters, group_by) is logged in the audit row's `query` JSON
+  **together with its computed result** — the log shows both the formula
+  and the value the AI was given. Denied attempts are logged with the
+  attempted formula. The AI has no write path at all (the legacy engine is
+  read-only by construction), so reads + calculations ARE the complete
+  data-access surface, and all of it is audited.

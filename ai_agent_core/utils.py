@@ -134,7 +134,18 @@ def guarded_aggregate_data(user,
     result = legacy.aggregate_data(decision.model_path, func, field,
                                    filters=filters, user=user,
                                    group_by=group_by, limit=limit)
-    record_audit(user, "aggregate", decision, query=query)
+    # Audit the calculation AND its computed outcome, so the log shows
+    # exactly what formula ran and what value the AI was given.
+    query["ok"] = bool(result.get("ok"))
+    if result.get("ok"):
+        query["result"] = result.get("data")   # already JSON-safe (legacy)
+    else:
+        query["error"] = (result.get("error") or {}).get("code")
+    record_audit(user, "aggregate", decision, query=query,
+                 row_count=(len(result["data"])
+                            if result.get("ok")
+                            and isinstance(result.get("data"), list)
+                            else None))
     return result
 
 

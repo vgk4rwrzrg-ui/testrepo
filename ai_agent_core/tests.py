@@ -665,3 +665,48 @@ class AuditProvenanceTests(TestCase):
                         if sh.has_text_frame for p in sh.text_frame.paragraphs
                         for run in p.runs)
         self.assertIn("Audit & Provenance", blob)
+
+
+class CalculationAuditTests(TestCase):
+    """Aggregations/calculations land in the audit log with their results."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.hr = Group.objects.create(name="HR")
+        cls.alice = User.objects.create_user("alice")
+        cls.alice.groups.add(cls.hr)
+        p = TableAccessPolicy.objects.create(
+            app_label="auth", model_name="User", access_level="read")
+        p.groups.add(cls.hr)
+
+    def test_aggregate_formula_and_result_are_logged(self):
+        r = guarded_aggregate_data(self.alice, "auth.User", "count", "id",
+                                   filters={"is_active": True})
+        self.assertTrue(r["ok"])
+        audit = TableAccessAudit.objects.filter(action="aggregate").latest(
+            "created_at")
+        self.assertTrue(audit.was_allowed)
+        self.assertEqual(audit.query["func"], "count")     # the formula
+        self.assertEqual(audit.query["field"], "id")
+        self.assertEqual(audit.query["filters"], {"is_active": True})
+        self.assertTrue(audit.query["ok"])
+        self.assertEqual(audit.query["result"], r["data"])  # the outcome
+
+    def test_grouped_aggregate_result_logged(self):
+        r = guarded_aggregate_data(self.alice, "auth.User", "count", "id",
+                                   group_by="is_active")
+        self.assertTrue(r["ok"])
+        audit = TableAccessAudit.objects.filter(action="aggregate").latest(
+            "created_at")
+        self.assertEqual(audit.query["group_by"], "is_active")
+        self.assertEqual(audit.query["result"], r["data"])
+        self.assertEqual(audit.row_count, len(r["data"]))
+
+    def test_denied_aggregate_still_logged_with_formula(self):
+        bob = User.objects.create_user("bob")
+        r = guarded_aggregate_data(bob, "auth.User", "sum", "id")
+        self.assertFalse(r["ok"])
+        audit = TableAccessAudit.objects.filter(
+            username="bob", action="aggregate").latest("created_at")
+        self.assertFalse(audit.was_allowed)
+        self.assertEqual(audit.query["func"], "sum")   # attempt is on record
