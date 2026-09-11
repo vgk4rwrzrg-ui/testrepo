@@ -1,0 +1,37 @@
+.llm-chat-message,
+.bubble {
+  max-width: 48rem;
+  margin: .5rem 0;
+  padding: .9rem 1.1rem;
+  background: #f7f7f8;
+  border-radius: 12px;
+  font: 15px/1.6 system-ui, sans-serif;
+  color: #1a1a1a;
+}
+.llm-chat-message table, .bubble table {
+  border-collapse: collapse; width: 100%; margin: .6rem 0; font-size: .9em;
+}
+.llm-chat-message th, .bubble th {
+  background: #2f5496; color: #fff; padding: .4rem .6rem; text-align: left;
+}
+.llm-chat-message td, .bubble td {
+  border: 1px solid #ddd; padding: .35rem .6rem;
+}
+.llm-chat-message tr:nth-child(even) td,
+.bubble tr:nth-child(even) td { background: #f6f8fa; }
+.llm-chat-message blockquote, .bubble blockquote {
+  border-left: 3px solid #2f5496; margin: .5rem 0;
+  padding: .2rem .8rem; color: #555;
+}
+.llm-chat-message pre, .bubble pre {
+  background: #1e1e2e; color: #eee; padding: .8rem;
+  border-radius: 8px; overflow-x: auto;
+}
+.llm-chart-wrap { position: relative; height: 260px; margin: .6rem 0; }
+
+.llm-attachment {
+  display: inline-flex; align-items: center; gap: .5rem;
+  background: #fff; border: 1px solid #ddd; border-radius: 8px;
+  padding: .5rem .8rem; margin: .3rem 0;
+}
+.llm-attachment a { font-weight: 600; color: #2f5496; }

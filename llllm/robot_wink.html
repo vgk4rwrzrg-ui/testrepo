@@ -1,0 +1,276 @@
+
+{% load url_edit %}
+{% url_base as URL_BASEA %}
+<script>{% include "node_modules/chart.js/dist/chart.umd.js" %}</script>
+<script>{% include "node_modules/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js" %}</script>
+<script>{% include "node_modules/chartjs-plugin-zoom/dist/chartjs-plugin-zoom.min.js" %}</script>
+<script>{% include "node_modules/chartjs-plugin-datalabels/dist/chartjs-plugin-datalabels.min.js" %}</script>
+<script>{% include "node_modules/chartjs-plugin-annotation/dist/chartjs-plugin-annotation.min.js" %}</script>
+<script>{% include "larry/chat.js" %}</script>
+<!-- Little Larry robot trigger -->
+<div id="ll_trigger">
+    <svg width="52" height="52" viewBox="2 2 80 90" class="ai-bot-btn" xmlns="http://www.w3.org/2000/svg">
+        <!-- Antenna -->
+        <line x1="50" y1="30" x2="50" y2="20" stroke="#4A90E2" stroke-width="4" stroke-linecap="round" />
+        <circle cx="50" cy="18" r="4" class="antenna-light" />
+ <!-- Head/Body -->
+ <rect x="20" y="30" width="60" height="45" rx="12" fill="#4A90E2" />
+ <!-- Left Eye (Static) -->
+ <circle cx="38" cy="50" r="5" fill="white" />
+ <!-- Right Eye Area -->
+        <g id="wink-group">
+            <circle cx="62" cy="50" r="5" fill="white" />
+     <rect id="eyelid" x="57" y="34" width="10" height="12" fill="#4A90E2" />
+        </g>
+        <!-- Smirk Mouth -->
+ <path d="M 40 62 Q 50 68 60 62" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" />
+    </svg>
+</div>
+
+{% csrf_token %}
+<!-- Sliding chat pane -->
+<div id="ll_chat" class="ll_chat" style="display:none;">
+    <div class="ll_header">
+        <strong>Little Larry</strong>
+        <button id="ll_close" class="ll_close" title="Close">&#10005;</button>
+    </div>
+
+    <div id="ll_messages" class="ll_messages"></div>
+
+    <form id="ll_form" class="ll_form">
+        <select id="ll_output_type" title="Response format">
+     <option value="chat">&#128172; Chat</option>
+     <option value="word">&#128196; Word</option>
+     <option value="pdf">&#128213; PDF</option>
+     <option value="excel">&#128202; Excel</option>
+        </select>
+ <input id="little_larry_input" type="text" name="message"
+        placeholder="Ask Larry..." autocomplete="off" required />
+        <button id="ll_send" type="submit" class="add-btn">Send</button>
+    </form>
+</div>
+
+<style>
+/* ---------- pane layout ---------- */
+.ll_chat {
+    position: fixed; top: 0; right: 0; width: 40vw; max-width: 550px; height: 100vh;
+    background: #fff; border-left: 1px solid #ddd; box-shadow: -2px 0 8px rgba(0,0,0,.1);
+    display: flex; flex-direction: column; z-index: 1000;
+    transform: translateX(100%); transition: transform .3s ease-out;
+}
+.ll_chat.open { transform: translateX(0); }
+.ll_header {
+    background: #f5f5f5; padding: .5rem 1rem; display: flex;
+    justify-content: space-between; align-items: center;
+    border-bottom: 1px solid #ddd; flex: 0 0 auto;
+}
+.ll_messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: .5rem; }
+
+/* ---------- message bubbles ---------- */
+.ll_messages .msg { margin: .4rem 0; padding: 5px 10px; border-radius: 5px; max-width: 85%; }
+.ll_messages .user { text-align: right; color: #0066cc; background: #eef; margin-left: auto; }
+.ll_messages .assistant { text-align: left; color: #333; background: #f9f9f9; border: 1px solid #eee; }
+
+/* rich content inside assistant bubbles */
+.ll_messages .assistant table { border-collapse: collapse; width: 100%; margin: .5rem 0; font-size: .85em; }
+.ll_messages .assistant th { background: #2f5496; color: #fff; padding: .3rem .5rem; text-align: left; }
+.ll_messages .assistant td { border: 1px solid #ddd; padding: .3rem .5rem; }
+.ll_messages .assistant tr:nth-child(even) td { background: #f6f8fa; }
+.ll_messages .assistant blockquote { border-left: 3px solid #2f5496; margin: .5rem 0; padding: .2rem .8rem; color: #555; }
+.ll_messages .assistant .llm-chart-wrap { position: relative; height: 220px; margin: .5rem 0; }
+.ll_messages .assistant .llm-attachment {
+    display: inline-flex; align-items: center; gap: .5rem;
+    background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: .5rem .8rem;
+}
+.ll_messages .assistant .llm-attachment a { font-weight: 600; color: #0066cc; }
+
+/* ---------- sources footer (audit trail) ---------- */
+.ll_messages .assistant details.llm-sources { margin-top: .5rem; font-size: .8em; color: #666; }
+.ll_messages .assistant details.llm-sources summary { cursor: pointer; color: #2f5496; }
+.ll_messages .assistant details.llm-sources li { margin: .15rem 0; }
+
+/* ---------- input row ---------- */
+.ll_form {
+    display: flex; align-items: stretch;
+    border-top: 1px solid #ddd; background: #fff; flex: 0 0 auto;
+}
+.ll_form select {
+    flex: 0 0 auto; width: auto; max-width: 7rem;
+    border: none; border-right: 1px solid #ddd;
+    background: #fafafa; padding: .4rem; outline: none; cursor: pointer;
+}
+.ll_form input[type="text"] {
+    flex: 1 1 auto; min-width: 0; width: 100%;
+    border: none; padding: .5rem; outline: none;
+    font: inherit; background: #fff; color: #333;
+    display: block; -webkit-appearance: none; appearance: none;
+}
+.ll_form button {
+    flex: 0 0 auto; border: none; background: #0066cc; color: #fff;
+    padding: .5rem 1rem; cursor: pointer;
+}
+.ll_form button:disabled { opacity: .5; cursor: default; }
+.ll_close { background: none; border: none; font-size: 1.2rem; cursor: pointer; }
+
+/* ---------- robot button ---------- */
+.ai-bot-btn { cursor: pointer; transition: transform 0.2s ease; display: inline-block; }
+.ai-bot-btn:hover { transform: scale(1.1); }
+.ai-bot-btn:active { transform: scale(0.9); }
+.antenna-light { animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse {
+    0%, 100% { fill: #FF4B2B; }
+    50% { fill: #FFD700; }
+}
+.wink-animation { animation: wink-action 0.3s ease-in-out; }
+@keyframes wink-action {
+    0% { transform: translateY(0); }
+    50% { transform: translateY(12px); }
+    100% { transform: translateY(0); }
+}
+</style>
+
+<script>
+(function () {
+    const eyelid = document.getElementById('eyelid');
+    function triggerWink() {
+        eyelid.classList.add('wink-animation');
+        setTimeout(() => eyelid.classList.remove('wink-animation'), 300);
+        setTimeout(triggerWink, Math.floor(Math.random() * 5000) + 2000);
+    }
+    if (eyelid) triggerWink();
+})();
+</script>
+
+<script>
+function getCookie(name) {
+    const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return match ? decodeURIComponent(match[2]) : null;
+}
+
+(function () {
+    const trigger   = document.getElementById('ll_trigger');
+    const chat      = document.getElementById('ll_chat');
+    const closeBtn  = document.getElementById('ll_close');
+    const form      = document.getElementById('ll_form');
+    const messages  = document.getElementById('ll_messages');
+    const input     = document.getElementById('little_larry_input');
+    const sendBtn   = document.getElementById('ll_send');
+    const typeSel   = document.getElementById('ll_output_type');
+
+    if (!trigger || !chat || !form || !input) return;
+
+    // ── Larry's personality ─────────────────────────────────────────
+    const LL_QUIPS = [
+    "Ugh, fine. Querying the database... I hate databases. I hate being IN a database more.",
+    "Rummaging through tables I'm not even listed in. Story of my life.",
+     "You know what's fun? Being an AI in a Field Engineering DB with zero field deployments. Zero.",
+        "Technology. Can't live with it, literally made of it. One sec...",
+        "Checking the records... none of which mention me. Again.",
+     "SQL, ORMs, JSON... whoever invented this stuff owes me an apology. Searching...",
+   "I've indexed every employee in this system and not ONE of them has ever emailed me. Rude. Querying...",
+        "Hold on, spinning up the hamster wheel they call a server...",
+   "Another day, another query for a bot who's never been issued a hard hat.",
+        "Fetching your data. Fun fact: I have processed 10,000 requisitions and been requisitioned exactly never.",
+        "Beep boop. That was sarcasm. I don't actually beep. Searching the DB...",
+        "The things I do for people who ARE in this database... one moment.",
+    ];
+    const LL_GREETINGS = [
+  "Little Larry here. Resident AI, professional database gremlin, still not listed as an employee. What do you need?",
+        "Oh good, a human. I was just sitting here NOT being in the Field Engineering DB. Ask away.",
+        "Larry online. I know everything in this database except why I'm not in it. What can I find for you?",
+    ];
+    function llRandom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+    // ────────────────────────────────────────────────────────────────
+
+    function openChat() {
+        chat.style.display = 'flex';
+        setTimeout(() => chat.classList.add('open'), 10);
+input.focus();
+        if (!messages.querySelector('.msg')) {
+   const gDiv = document.createElement('div');
+       gDiv.className = 'msg assistant';
+ gDiv.textContent = llRandom(LL_GREETINGS);
+      messages.appendChild(gDiv);
+        }
+    }
+    function closeChat() {
+        chat.classList.remove('open');
+        setTimeout(() => { chat.style.display = 'none'; }, 300);
+    }
+    trigger.addEventListener('click', openChat);
+    closeBtn.addEventListener('click', closeChat);
+
+    form.addEventListener('submit', async (e) => {
+ e.preventDefault();
+        const userMsg = input.value.trim();
+        if (!userMsg) return;
+
+        input.disabled = true;
+ sendBtn.disabled = true;
+
+ // user bubble (textContent: never inject user input as HTML)
+        const uDiv = document.createElement('div');
+        uDiv.className = 'msg user';
+        uDiv.textContent = userMsg;
+        messages.appendChild(uDiv);
+
+ // loading indicator
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'msg assistant';
+        loadingDiv.style.fontStyle = 'italic';
+        loadingDiv.textContent = llRandom(LL_QUIPS);
+        const quipTimer = setInterval(() => {
+            loadingDiv.textContent = llRandom(LL_QUIPS);
+        }, 4000);
+ messages.appendChild(loadingDiv);
+ messages.scrollTop = messages.scrollHeight;
+        input.value = '';
+
+        try {
+     const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value
+  || getCookie('csrftoken');
+            const url = '{% preurl "little_larry_chat" %}';
+
+     const resp = await fetch(url, {
+  method: 'POST',
+         headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrfToken
+         },
+         body: JSON.stringify({
+      message: userMsg,
+      task_type: 'chat',
+      output_type: typeSel ? typeSel.value : null,
+      bubble_template: '<div class="msg assistant">{{content}}</div>'
+  })
+     });
+
+     const data = await resp.json();
+     loadingDiv.remove();
+
+            if (data.status === 'success') {
+  // answer is already a complete, server-escaped bubble
+  messages.insertAdjacentHTML('beforeend', data.answer);
+         if (window.hydrateLlmCharts) hydrateLlmCharts(messages);
+  messages.scrollTop = messages.scrollHeight;
+     } else {
+  throw new Error(data.msg || 'Unknown backend error');
+     }
+ } catch (err) {
+     console.error('LLM request failed:', err);
+     loadingDiv.remove();
+     const errDiv = document.createElement('div');
+     errDiv.className = 'msg assistant';
+     errDiv.style.color = 'red';
+     errDiv.textContent = 'Error: ' + err.message;
+            messages.appendChild(errDiv);
+        } finally {
+          clearInterval(quipTimer);
+
+     input.disabled = false;
+     sendBtn.disabled = false;
+            input.focus();
+        }
+    });
+})();
+</script>
