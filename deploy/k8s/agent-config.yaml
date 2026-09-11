@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-agent-profiles
+  namespace: jupyterhub
+data:
+  default.yaml: |
+    agent:
+      name: larry
+      personality:
+        tone: professional
+        system_prompt: "You are Larry, an enterprise data assistant."
+    engine:
+      provider: openai_compat
+      model: gpt-4o-mini
+      temperature: 0.1
+---
+# KubeSpawner snippet (values.yaml -> singleuser) mounting the profiles and
+# wiring the environment the app expects.
+# singleuser:
+#   storage:
+#     extraVolumes:
+#       - name: ai-agent-profiles
+#         configMap:
+#           name: ai-agent-profiles
+#     extraVolumeMounts:
+#       - name: ai-agent-profiles
+#         mountPath: /etc/ai_agent/config
+#         readOnly: true
+#   extraEnv:
+#     AI_AGENT_CONFIG_DIR: /etc/ai_agent/config
+#     AI_AGENT_PROFILE: default
+#     AI_AGENT_ALLOWED_HOSTS: "hub.example.com"
+#     AI_AGENT_CSRF_TRUSTED_ORIGINS: "https://hub.example.com"

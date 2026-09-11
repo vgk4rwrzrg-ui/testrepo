@@ -1,0 +1,18 @@
+# Example agent profile. Mount the containing directory at $AI_AGENT_CONFIG_DIR.
+agent:
+  name: larry
+  personality:
+    tone: professional
+    system_prompt: >
+      You are Larry, an enterprise data assistant. Answer only from data
+      returned by the table-search tools. Never invent rows.
+engine:
+  provider: openai_compat
+  model: gpt-4o-mini
+  temperature: 0.1
+  max_tokens: 2048
+  timeout_seconds: 60
+tools:
+  table_search:
+    enabled: true
+    default_limit: 50
